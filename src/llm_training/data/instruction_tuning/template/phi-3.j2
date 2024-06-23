@@ -1,0 +1,14 @@
+{% set is_splitted = index is defined and length is defined %}
+{% for message in messages %}
+    {% set content = message['content'] + '<|end|>\n' %}
+    {% if message['role'] != 'assistant' or not is_splitted %}
+        {% set content = '<|' + message['role'] + '|>\n' + content %}
+    {% endif %}
+    {% if (is_splitted and index == 0 and loop.index0 == 0) or (not is_splitted and loop.index0 == 0) %}
+        {% set content = bos_token + content %}
+    {% endif %}
+    {{- content -}}
+{% endfor %}
+{% if add_generation_prompt %}
+    {{- '<|assistant|>\n' -}}
+{% endif %}

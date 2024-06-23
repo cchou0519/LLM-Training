@@ -1,0 +1,15 @@
+{% set is_splitted = index is defined and length is defined %}
+{% for message in messages %}
+    {% set header = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n' %}
+    {% set content = message['content'] | trim + '<|eot_id|>' %}
+    {% if message['role'] != 'assistant' or not is_splitted %}
+        {% set content = header + content %}
+    {% endif %}
+    {% if (is_splitted and index == 0 and loop.index0 == 0) or (not is_splitted and loop.index0 == 0) %}
+        {% set content = bos_token + content %}
+    {% endif %}
+    {{- content -}}
+{% endfor %}
+{% if add_generation_prompt %}
+    {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
+{% endif %}
