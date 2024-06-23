@@ -46,3 +46,7 @@ srun llm-training fit --config <CONFIG_PATH> --trainer.num_nodes <NUM_NODES>
 ```
 
 See [train.sh](scripts/train.sh) for sbatch script template.
+
+### Examples
+
+- [Continue Training Phi-3](docs/phi3_example.md)
