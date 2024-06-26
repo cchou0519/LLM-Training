@@ -47,6 +47,12 @@ srun llm-training fit --config <CONFIG_PATH> --trainer.num_nodes <NUM_NODES>
 
 See [train.sh](scripts/train.sh) for sbatch script template.
 
+### Convert to Hugging Face
+
+```bash
+python scripts/convert_to_hf.py <CKPT_PATH> <OUTPUT_PATH>
+```
+
 ### Examples
 
 - [Continue Training Phi-3](docs/phi3_example.md)
