@@ -69,7 +69,7 @@ class ResumableDistributedSampler(DistributedSampler):
     def __iter__(self) -> Iterator[int]:
         for i, index in enumerate(super().__iter__()):
             is_used = index in self.used_indices
-            is_padding = i >= len(self.dataset)
+            is_padding = i >= (len(self.dataset) // self.num_replicas)
 
             self.used_indices.add(index)
 
