@@ -1,3 +1,5 @@
+JOB_NAME=
+NODES=
 PARTITION=
 ACCOUNT=
 GPUS_PER_NODE=
@@ -32,6 +34,12 @@ SBATCH_ARGS=(
     --account $ACCOUNT
     --nodes $NODES
 )
+
+if [[ $JOB_NAME ]];
+then
+    SBATCH_ARGS+=(--job-name $JOB_NAME)
+fi
+
 SBATCH_ARGS+=(${EXTRA_ARGS[@]})
 SBATCH_ARGS=${SBATCH_ARGS[@]}
 
