@@ -1,0 +1,21 @@
+{% set is_splitted = index is defined and length is defined %}
+{% for message in messages %}
+    {% set index = index if is_splitted else loop.index0 %}
+    {% set length = length if is_splitted else messages|length %}
+    {% set role = message['role'] if message['role'] != 'assistant' else 'model' %}
+    {% set header = '<start_of_turn>' + role + '\n' %}
+    {% set content = message['content'] | trim + '<end_of_turn>\n' %}
+    {% if message['role'] != 'assistant' or not is_splitted %}
+        {% set content = header + content %}
+    {% endif %}
+    {% if index == 0 and loop.index0 == 0 %}
+        {% set content = bos_token + content %}
+    {% endif %}
+    {% if index == length - 1 and loop.index0 == messages|length - 1 and message['role'] == 'assistant' %}
+        {% set content = content + eos_token %}
+    {% endif %}
+    {{- content -}}
+{% endfor %}
+{% if add_generation_prompt %}
+    {{- '<start_of_turn>model\n' -}}
+{% endif %}
