@@ -67,9 +67,8 @@ class BaseDataModule(L.LightningDataModule):
             dataloader_class = ResumableDataLoader
             dataloader_kwargs['shuffle'] = True
 
-            distributed_sampler_kwargs = self.trainer.distributed_sampler_kwargs
-            if distributed_sampler_kwargs is not None:
-                dataloader_kwargs.update(distributed_sampler_kwargs)
+            if self.trainer is not None and self.trainer.distributed_sampler_kwargs is not None:
+                dataloader_kwargs.update(self.trainer.distributed_sampler_kwargs)
 
         return dataloader_class(**dataloader_kwargs)
     
