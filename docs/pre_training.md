@@ -4,7 +4,7 @@ The pre-training data processing logic is implemented through [`PreTrainingDataM
 
 It uses [datasets](https://github.com/huggingface/datasets) under the hood to load and process data.
 
-A valid input dataset must include a text field, which must be of type string.
+A valid input dataset must include a `text` field, which must be of type string.
 
 ## Key Parameters
 
