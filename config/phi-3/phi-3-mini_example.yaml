@@ -11,8 +11,8 @@ trainer:
   logger:
     class_path: llm_training.overrides.wandb.WandbLogger
     init_args:
-      name: phi-3-mini-128k-instruct_demo
-      job_type: demo
+      name: phi-3-mini-128k-instruct_example
+      job_type: example
       project: llm-training
       save_dir: logs
       save_code: true

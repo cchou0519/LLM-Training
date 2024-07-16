@@ -1,0 +1,71 @@
+seed_everything: 42
+float32_matmul_precision: medium
+logging_level: DEBUG
+
+trainer:
+  strategy: 
+    class_path: llm_training.overrides.DeepSpeedStrategy
+    init_args:
+      stage: 2
+  precision: bf16-true
+  logger:
+    class_path: llm_training.overrides.wandb.WandbLogger
+    init_args:
+      name: phi-3-mini-128k-instruct_it_example
+      job_type: example
+      project: llm-training
+      save_dir: logs
+      save_code: true
+  max_epochs: 1
+  val_check_interval: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  callbacks:
+    - class_path: LearningRateMonitor
+    - class_path: llm_training.overrides.ModelCheckpoint
+      init_args:
+        save_on_train_epoch_end: true
+        save_top_k: 1
+
+model:
+  class_path: llm_training.models.hf_causal_lm.HFCausalLM
+  init_args.config:
+    hf_path: microsoft/Phi-3-mini-128k-instruct
+    hf_model_kwargs:
+      torch_dtype: bfloat16
+      attn_implementation: flash_attention_2
+    enable_gradient_checkpointing: true
+    
+    # neftune_alpha: 5.0
+
+    optim:
+      optimizer_class: deepspeed.ops.adam.FusedAdam
+      optimizer_kwargs:
+        lr: 1e-5
+      lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
+      lr_scheduler_kwargs:
+        num_warmup_steps: 100
+        min_lr: 1e-6
+
+data:
+  class_path: llm_training.data.InstructionTuningDataModule
+  init_args.config:
+    dataset_kwargs:
+      path: ShinoharaHare/Infinity-Instruct-Reformatted
+      name: "0625"
+    pre_processed_data_path: null
+    tokenizer:
+      class_path: HFTokenizer
+      init_args:
+        path: microsoft/Phi-3-mini-128k-instruct
+    batch_size: 1
+    add_default_system_prompt_rate: 0.0
+    default_system_prompt: ""
+    chat_template: phi-3
+    concat_method: GROUP_BY_LENGTH
+    max_length: 4096
+    pad_to_multiple_of: 64
+    validation_split: null
+    num_proc: 4
+    num_workers: 4
+    enable_cache: true
