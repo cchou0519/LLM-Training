@@ -8,3 +8,9 @@ class HFBasedDataModuleConfig(BaseDataModuleConfig):
     num_proc: int | None = None
     cleanup_cache_files: bool = False
     enable_cache: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if 'name' in self.dataset_kwargs:
+            self.dataset_kwargs['name'] = str(self.dataset_kwargs['name'])

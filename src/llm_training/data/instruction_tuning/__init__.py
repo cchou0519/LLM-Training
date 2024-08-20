@@ -2,4 +2,3 @@ from .instruction_tuning_datacollator import InstructionTuningDataCollator
 from .instruction_tuning_datamodule import InstructionTuningDataModule
 from .instruction_tuning_datamodule_config import \
     InstructionTuningDataModuleConfig
-from .template import PREDEFINED_TEMPLATES

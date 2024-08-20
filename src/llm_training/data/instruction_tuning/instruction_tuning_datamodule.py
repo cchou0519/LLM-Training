@@ -151,8 +151,8 @@ def _group_indices_by_length(lengths: list[int], max_length: int) -> list[list[i
 
 
 def _group_by_length(batch: dict[str, list[list[int]]], max_length: int):
-    grouped_input_ids = []
-    grouped_labels = []
+    input_ids_group = []
+    labels_group = []
 
     groups = _group_indices_by_length([len(x) for x in batch['input_ids']], max_length)
     for group in groups:
@@ -161,9 +161,10 @@ def _group_by_length(batch: dict[str, list[list[int]]], max_length: int):
         for i in group:
             current_grouped_input_ids.append(batch['input_ids'][i])
             current_grouped_labels.append(batch['labels'][i])
-        grouped_input_ids.append(current_grouped_input_ids)
-        grouped_labels.append(current_grouped_labels)
+        input_ids_group.append(current_grouped_input_ids)
+        labels_group.append(current_grouped_labels)
+    
     return {
-        'input_ids_group': grouped_input_ids,
-        'labels_group': grouped_labels
+        'input_ids_group': input_ids_group,
+        'labels_group': labels_group
     }

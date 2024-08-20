@@ -1,6 +1,7 @@
 from pathlib import Path
 
-class _PredefinedTemplates:
+
+class _ChatTemplates:
     def _get_path_by_name(self, name: str) -> Path:
         return Path(__file__).parent.joinpath(name).with_suffix('.j2')
     
@@ -15,4 +16,4 @@ class _PredefinedTemplates:
         return self._get_path_by_name(name).exists()
 
 
-PREDEFINED_TEMPLATES = _PredefinedTemplates()
+CHAT_TEMPLATES = _ChatTemplates()

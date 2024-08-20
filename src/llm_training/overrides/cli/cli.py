@@ -3,13 +3,17 @@ import os
 from typing import Any, Callable, Optional, Union
 
 import torch
-from lightning.pytorch import LightningDataModule, LightningModule, Trainer
+from lightning.pytorch import LightningDataModule, LightningModule
+from lightning.pytorch import Trainer as _Trainer
 from lightning.pytorch.cli import ArgsType, LightningArgumentParser
 from lightning.pytorch.cli import LightningCLI as _LightningCLI
 from lightning.pytorch.cli import SaveConfigCallback as _SaveConfigCallback
 
 from llm_training.overrides.callbacks import (OutputRedirection,
-                                          SaveConfigCallback, TQDMProgressBar)
+                                              SaveConfigCallback,
+                                              TQDMProgressBar)
+
+from .trainer import Trainer
 
 
 class LightningCLI(_LightningCLI):
@@ -19,7 +23,7 @@ class LightningCLI(_LightningCLI):
         datamodule_class: type[LightningDataModule] | Callable[..., LightningDataModule] | None = None,
         save_config_callback: type[_SaveConfigCallback] | None = None,
         save_config_kwargs: dict[str, Any] | None = None,
-        trainer_class: type[Trainer] | Callable[..., Trainer] = Trainer,
+        trainer_class: type[_Trainer] | Callable[..., _Trainer] = Trainer,
         trainer_defaults: dict[str, Any] | None = None,
         seed_everything_default: bool | int = True,
         parser_kwargs: dict[str, Any] | dict[str, dict[str, Any]] | None = None,

@@ -4,7 +4,6 @@ from typing import Any
 
 import torch
 import torch.distributed
-import torch.nn.functional as F
 import torch.utils
 import torch.utils.checkpoint
 from flash_attn import flash_attn_func, flash_attn_varlen_func
@@ -12,12 +11,13 @@ from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input
 from flash_attn.ops.activations import swiglu
 from torch import nn
 from torchmetrics.text import Perplexity
+from transformers import AutoConfig, AutoModelForCausalLM, PretrainedConfig
 from transformers.modeling_attn_mask_utils import \
     _prepare_4d_causal_attention_mask
-from transformers.models.phi3.modeling_phi3 import Phi3Config, Phi3ForCausalLM
 
 from llm_training.metrics import ConsumedSamples, ConsumedTokens
 from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.ops.attention_op import get_unpad_data
 from llm_training.ops.cross_entropy_op import cross_entropy, shift_labels
 from llm_training.ops.rms_norm_op import rms_norm
 from llm_training.utils.decorators import copy_method_signature
@@ -25,7 +25,7 @@ from llm_training.utils.decorators import copy_method_signature
 from .phi3_config import LitPhi3Config
 
 try:
-    from peft import get_peft_model # type: ignore
+    from peft import get_peft_model  # type: ignore
 except ImportError:
     ...
 
@@ -36,8 +36,8 @@ class LitPhi3(HFCompatModel):
     config: LitPhi3Config
     layers: list["Phi3DecoderLayer"]
 
-    hf_config_class = Phi3Config
-    hf_model_class = Phi3ForCausalLM
+    hf_config_class = AutoConfig
+    hf_model_class = AutoModelForCausalLM
 
     def __init__(self, config: LitPhi3Config) -> None:
         super().__init__(config)
@@ -47,7 +47,7 @@ class LitPhi3(HFCompatModel):
         self.consumed_samples = ConsumedSamples()
         self.consumed_tokens = ConsumedTokens()
 
-    def update_config_with_hf_config(self, hf_config: Phi3Config) -> None:
+    def update_config_with_hf_config(self, hf_config: PretrainedConfig) -> None:
         assert hf_config.hidden_act == 'silu'
         assert not hf_config.tie_word_embeddings
 
@@ -92,7 +92,7 @@ class LitPhi3(HFCompatModel):
         super().on_after_configure_model()
 
         if self.config.peft_config is not None:
-            from peft.mapping import PEFT_TYPE_TO_TUNER_MAPPING # type: ignore
+            from peft.mapping import PEFT_TYPE_TO_TUNER_MAPPING  # type: ignore
 
             peft_config = self.config.peft_config
 
@@ -416,6 +416,47 @@ class Phi3YarnScaledRotaryEmbedding(Phi3RotaryEmbedding):
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
+class Phi3LongRoPEScaledRotaryEmbedding(Phi3RotaryEmbedding):
+    def __init__(self, dim, config):
+        super().__init__(dim, config.max_position_embeddings, config.rope_theta)
+
+        self.short_factor = config.rope_scaling["short_factor"]
+        self.long_factor = config.rope_scaling["long_factor"]
+        self.original_max_position_embeddings = config.original_max_position_embeddings
+
+    @torch.no_grad()
+    def forward(self, x, position_ids, seq_len=None):
+        seq_len = torch.max(position_ids) + 1
+        if seq_len > self.original_max_position_embeddings:
+            ext_factors = torch.tensor(self.long_factor, dtype=torch.float32, device=x.device)
+        else:
+            ext_factors = torch.tensor(self.short_factor, dtype=torch.float32, device=x.device)
+
+        inv_freq_shape = torch.arange(0, self.dim, 2, dtype=torch.int64, device=x.device).float() / self.dim
+        self.inv_freq = 1.0 / (ext_factors * self.base**inv_freq_shape)
+
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        # Force float32 since bfloat16 loses precision on long contexts
+        # See https://github.com/huggingface/transformers/pull/29285
+        device_type = x.device.type
+        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+
+            scale = self.max_position_embeddings / self.original_max_position_embeddings
+            if scale <= 1.0:
+                scaling_factor = 1.0
+            else:
+                scaling_factor = math.sqrt(1 + math.log(scale) / math.log(self.original_max_position_embeddings))
+
+            cos = emb.cos() * scaling_factor
+            sin = emb.sin() * scaling_factor
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+
 class Phi3MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -549,6 +590,8 @@ class Phi3Attention(nn.Module):
                 self.rotary_emb = Phi3SuScaledRotaryEmbedding(self.head_dim, self.config)
             elif scaling_type == "yarn":
                 self.rotary_emb = Phi3YarnScaledRotaryEmbedding(self.head_dim, self.config)
+            elif scaling_type == "longrope":
+                self.rotary_emb = Phi3LongRoPEScaledRotaryEmbedding(self.head_dim, self.config)
             else:
                 raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
 
@@ -866,17 +909,6 @@ class Phi3FlashAttention2(Phi3Attention):
 
         return attn_output
     
-    def _get_unpad_data(self, attention_mask):
-        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-        indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
-        max_seqlen_in_batch = seqlens_in_batch.max().item()
-        cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
-        return (
-            indices,
-            cu_seqlens,
-            max_seqlen_in_batch,
-        )
-
     # Copied from transformers.models.mistral.modeling_mistral.MistralFlashAttention2._upad_input
     def _upad_input(self, query_layer, key_layer, value_layer, attention_mask, query_length):
         batch_size, kv_seq_len, num_heads, head_dim = key_layer.shape
@@ -887,7 +919,7 @@ class Phi3FlashAttention2(Phi3Attention):
             attention_mask_num_tokens = attention_mask.shape[-1]
             attention_mask = attention_mask[:, attention_mask_num_tokens - kv_seq_len :]
 
-        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = self._get_unpad_data(attention_mask)
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = get_unpad_data(attention_mask)
 
         key_layer = index_first_axis(key_layer.reshape(batch_size * kv_seq_len, num_heads, head_dim), indices_k)
         value_layer = index_first_axis(value_layer.reshape(batch_size * kv_seq_len, num_heads, head_dim), indices_k)

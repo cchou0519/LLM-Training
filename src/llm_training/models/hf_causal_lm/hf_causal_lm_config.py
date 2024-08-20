@@ -1,6 +1,7 @@
 from dataclasses import field
-from typing import Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal
 
+import torch
 from transformers import GenerationConfig
 
 from llm_training.models.hf_compat_model import HFCompatModelConfig
@@ -41,3 +42,6 @@ class HFCausalLMConfig(HFCompatModelConfig):
 
         if isinstance(self.generation_config, dict):
             self.generation_config = GenerationConfig.from_dict(self.generation_config)
+
+        if torch.cuda.get_device_capability()[0] >= 8:
+            self.hf_model_kwargs.setdefault('attn_implementation', 'flash_attention_2')

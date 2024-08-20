@@ -6,10 +6,12 @@ from accelerate import init_empty_weights
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy, wrap
 from torchmetrics.text import Perplexity
 from tqdm.auto import tqdm
-from transformers import AutoModelForCausalLM, PreTrainedModel
+from transformers import (AutoModelForCausalLM, PreTrainedModel,
+                          modeling_flash_attention_utils)
 
 from llm_training.metrics import ConsumedSamples, ConsumedTokens
 from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.ops.attention_op import get_unpad_data
 from llm_training.ops.cross_entropy_op import cross_entropy, shift_labels
 from llm_training.overrides import FSDPStrategy
 from llm_training.utils.decorators import copy_method_signature
@@ -18,13 +20,13 @@ from .hf_causal_lm_config import HFCausalLMConfig
 from .patchers import AutoPatcher
 
 try:
-    from peft import get_peft_model # type: ignore
+    from peft import get_peft_model  # type: ignore
 except ImportError:
     ...
 
+modeling_flash_attention_utils._get_unpad_data = get_unpad_data
 
 logger = logging.getLogger(__name__)
-
 
 class HFCausalLM(HFCompatModel):
     hf_model_class = AutoModelForCausalLM
@@ -135,7 +137,7 @@ class HFCausalLM(HFCompatModel):
             super().on_after_configure_model()
 
         if self.config.peft_config is not None:
-            from peft.mapping import PEFT_TYPE_TO_TUNER_MAPPING # type: ignore
+            from peft.mapping import PEFT_TYPE_TO_TUNER_MAPPING  # type: ignore
 
             peft_config = self.config.peft_config
 
@@ -144,7 +146,7 @@ class HFCausalLM(HFCompatModel):
 
             self.peft_model = get_peft_model(self, peft_config)
 
-    def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return cross_entropy(
             logits.flatten(end_dim=1),
             labels.flatten(end_dim=1),
@@ -157,7 +159,7 @@ class HFCausalLM(HFCompatModel):
     @copy_method_signature(forward)
     def __call__(): ...
 
-    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> dict[str, Any]:
+    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         labels = shift_labels(batch['labels'])
         position_ids = batch.get('position_ids', None)
 
