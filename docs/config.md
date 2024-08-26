@@ -2,7 +2,7 @@
 
 A config file is a YAML file used to set up everything, including seeding, distributed strategy, hyper-parameters, model, data, and more.
 
-When writing your own config file, it's a good idea to refer to some examples in the [config](../config) directory for guidance.
+When writing your own config file, it's a good idea to refer to some examples in the [config](../config/examples/) directory for guidance.
 
 The config file can be divided into three parts, including trainer, model and data.
 
