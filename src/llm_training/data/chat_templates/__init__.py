@@ -33,3 +33,4 @@ def get_chat_template(chat_template: str) -> str:
             '`chat_template` is being used directly as a chat template.\n'
             'If this is not the behavior you expected, please change the value to a name of pre-defined chat template or a file path.'
         )
+    return chat_template
