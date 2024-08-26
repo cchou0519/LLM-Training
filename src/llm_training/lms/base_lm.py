@@ -1,11 +1,9 @@
 import inspect
 import logging
-from contextlib import nullcontext
+from contextlib import contextmanager
 from functools import wraps
 from typing import Callable, ContextManager, ParamSpec, TypeVar
 
-import safetensors
-import safetensors.torch
 import torch
 import torch.distributed
 import torch.utils.checkpoint
@@ -13,33 +11,34 @@ from lightning import LightningModule, Trainer
 from lightning.pytorch.strategies import DeepSpeedStrategy, Strategy
 from tqdm.auto import tqdm
 
-from .lit_base_config import LitBaseConfig
+from llm_training.models.base_model.base_model import BaseModel
+from llm_training.utils.context_managers import ContextManagers
 
+from .base_lm_config import BaseLightningModuleConfig
 
 P = ParamSpec('P')
 R = TypeVar('R')
 
 logger = logging.getLogger(__name__)
 
-class LitBaseModel(LightningModule):
-    def __init__(self, config: LitBaseConfig) -> None:
+class BaseLightningModule(LightningModule):
+    def __init__(self, config: BaseLightningModuleConfig) -> None:
         super().__init__()
 
         self.config = config
         self._grad_norm = None
-
         self.configure_model = self._wrap_configure_model(self.configure_model)
         
     @property
     def has_pre_trained_weights(self) -> bool:
-        return self.config.pre_trained_weights is not None
+        return False
 
     @property
     def strategy(self) -> Strategy | None:
         return None if self._trainer is None else self.trainer.strategy
     
     @property
-    def is_load_from_checkpoint(self) -> bool:
+    def is_loading_from_checkpoint(self) -> bool:
         if self._trainer is None:
             return False
         
@@ -55,23 +54,24 @@ class LitBaseModel(LightningModule):
                 return f_locals['ckpt_path'] is not None
 
     @property
-    def need_to_load_pre_trained_weights(self) -> bool:
+    def should_load_pre_trained_weights(self) -> bool:
         return (
             self.has_pre_trained_weights
-            and not self.is_load_from_checkpoint
+            and self.config.load_pre_trained_weights
+            and not self.is_loading_from_checkpoint
         )
     
     @property
-    def need_to_initialize_weights(self) -> bool:
+    def should_initialize_weights(self) -> bool:
         return (
-            self.config.initialize_weights
-            and not self.is_load_from_checkpoint
+            self.config.init_weights
+            and not self.is_loading_from_checkpoint
             and not self.has_pre_trained_weights
         )
     
     @property
-    def need_to_sync_weights(self) -> bool:
-        return self.need_to_load_pre_trained_weights or self.need_to_initialize_weights
+    def should_sync_weights(self) -> bool:
+        return self.should_load_pre_trained_weights or self.should_initialize_weights
 
     @property
     def grad_norm(self) -> torch.Tensor | float | None:
@@ -80,56 +80,74 @@ class LitBaseModel(LightningModule):
         return self._grad_norm
 
     def get_pre_trained_weights(self) -> dict[str, torch.Tensor]:
-        return safetensors.torch.load_file(self.config.pre_trained_weights)
+        raise NotImplementedError()
+
+    @staticmethod
+    @contextmanager
+    def shutdown_ds_init_context():
+        import deepspeed  # type: ignore
+        deepspeed.zero.partition_parameters.shutdown_init_context()
+        yield
+        deepspeed.zero.partition_parameters.restore_init_context()
+
+    def get_pre_trained_weights_context(self) -> ContextManagers:
+        context_managers = []
+        if isinstance(self.strategy, DeepSpeedStrategy):
+            context_managers.append(self.shutdown_ds_init_context())
+        return ContextManagers(context_managers)
 
     def _ds_z3_load_state_dict(self, state_dict: dict[str, torch.Tensor] | None):
-        import deepspeed # type: ignore
+        import deepspeed  # type: ignore
 
-        if self.global_rank == 0:
-            progress = tqdm(total=sum(1 for _ in self.parameters()), desc='Loading weights')
-
-        for n, p in self.named_parameters():
-            with deepspeed.zero.GatheredParameters([p], modifier_rank=0):
-                if self.global_rank == 0:
-                    p.data.copy_(state_dict[n])
-                    progress.set_postfix_str(n)
-                    progress.update()
-
-        if self.global_rank == 0:
-            progress.close()
+        with tqdm(
+            desc='Loading weights',
+            total=sum(1 for _ in self.parameters()),
+            disable=self.global_rank != 0
+        ) as progress_bar:
+            for n, p in self.named_parameters():
+                with deepspeed.zero.GatheredParameters([p], modifier_rank=0):
+                    if self.global_rank == 0:
+                        p.data.copy_(state_dict[n])
+                
+                progress_bar.set_postfix_str(n)
+                progress_bar.update()
 
     def load_pre_trained_weights(self) -> None:
-        state_dict = self.get_pre_trained_weights() if self.global_rank == 0 else None
+        with self.get_pre_trained_weights_context():
+            state_dict = self.get_pre_trained_weights() if self.global_rank == 0 else None
         
         if getattr(self.strategy, 'zero_stage_3', False):
             self._ds_z3_load_state_dict(state_dict)
         elif self._trainer is not None and self._trainer.num_devices > 1:
-            if self.global_rank == 0:
-                progress = tqdm(total=sum(1 for _ in self.parameters()), desc='Loading weights')
+            with tqdm(
+                desc='Loading weights',
+                total=sum(1 for _ in self.parameters()),
+                disable=self.global_rank != 0
+            ) as progress_bar:
+                for n, p in self.named_parameters():
+                    if self.global_rank == 0:
+                        p.data.copy_(state_dict[n])
 
-            for n, p in self.named_parameters():
-                if self.global_rank == 0:
-                    p.data.copy_(state_dict[n])
-
-                    progress.set_postfix_str(n)
-                    progress.update()
-
-                torch.distributed.broadcast(p.data, src=0)
-        
-            if self.global_rank == 0:
-                progress.close()
+                    torch.distributed.broadcast(p.data, src=0)
+                    progress_bar.set_postfix_str(n)
+                    progress_bar.update()
         else:
             self.load_state_dict(state_dict)
 
     def configure_model_context(self) -> ContextManager:
-        context = nullcontext()
+        context_managers = [
+            BaseModel.init_weights_context(self.should_initialize_weights)
+        ]
+        
         if self.strategy is not None and not getattr(self.strategy, 'zero_stage_3', False):
-            empty_init = self.has_pre_trained_weights or self.is_load_from_checkpoint
+            empty_init = self.has_pre_trained_weights or self.is_loading_from_checkpoint
             context = self.strategy.tensor_init_context(empty_init=empty_init)
-        return context
+            context_managers.append(context)
+        
+        return ContextManagers(context_managers)
 
     def on_after_configure_model(self) -> None:
-        if self.need_to_load_pre_trained_weights:
+        if self.should_load_pre_trained_weights:
             self.load_pre_trained_weights()
     
     def _wrap_configure_model(self, configure_model: Callable[P, R]) -> Callable[P, R]:
@@ -141,7 +159,7 @@ class LitBaseModel(LightningModule):
             self.on_after_configure_model()
         
         return wrapped_configure_model
-
+    
     def configure_optimizers(self):
         assert self.config.optim is not None
 
@@ -162,3 +180,6 @@ class LitBaseModel(LightningModule):
                 'interval': 'step'
             }
         }
+
+    def get_model(self) -> BaseModel:
+        raise NotImplementedError()

@@ -1,2 +1,2 @@
-from .phi3_config import LitPhi3Config
-from .phi3_model import LitPhi3
+from .phi3_config import Phi3Config
+from .phi3_model import Phi3

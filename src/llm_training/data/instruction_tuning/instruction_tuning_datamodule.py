@@ -20,7 +20,7 @@ class InstructionTuningDataModule(HFBasedDataModule):
     def pre_process_data(self, dataset_dict: DatasetDict) -> DatasetDict:
         dataset_dict = self.map_dataset_dict(
             dataset_dict,
-            _apply_template_and_tokenize,
+            _apply_chat_template_and_tokenize,
             input_columns='messages',
             remove_columns=True,
             fn_kwargs=dict(
@@ -66,19 +66,24 @@ class InstructionTuningDataModule(HFBasedDataModule):
         return dataset_dict
 
 
-def _apply_template_and_tokenize(
+def _apply_chat_template_and_tokenize(
     messages: list[dict[str, str]],
     tokenizer: PreTrainedTokenizerBase,
-    chat_template: str | None = None,
-    default_system_prompt: str | None = None,
-    add_default_system_prompt_rate: float = 0.0
+    chat_template: str | None,
+    default_system_prompt: str | None,
+    add_default_system_prompt_rate: float | None 
 ):
     input_ids = []
     labels = []
 
     # Add an empty system prompt randomly if it does not exist.
     has_system_prompt = any(m['role'] == 'system' for m in messages)
-    if not has_system_prompt and random.random() < add_default_system_prompt_rate:
+    if (
+        not has_system_prompt
+        and default_system_prompt is not None
+        and add_default_system_prompt_rate is not None
+        and random.random() < add_default_system_prompt_rate
+    ):
         messages.insert(0, {'role': 'system', 'content': default_system_prompt})
 
     system_prompt = None

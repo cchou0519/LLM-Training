@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic import field_validator
+
 from llm_training.data.base_datamodule_config import BaseDataModuleConfig
 
 
@@ -9,8 +11,8 @@ class HFBasedDataModuleConfig(BaseDataModuleConfig):
     cleanup_cache_files: bool = False
     enable_cache: bool = True
 
-    def __post_init__(self):
-        super().__post_init__()
-
-        if 'name' in self.dataset_kwargs:
-            self.dataset_kwargs['name'] = str(self.dataset_kwargs['name'])
+    @field_validator('dataset_kwargs')
+    def validate_dataset_kwargs(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None and 'name' in value:
+            value['name'] = str(value['name'])
+        return value

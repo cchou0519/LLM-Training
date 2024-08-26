@@ -7,16 +7,17 @@ trainer:
     class_path: llm_training.overrides.DeepSpeedStrategy
     init_args:
       stage: 2
+      exclude_frozen_parameters: true
   precision: bf16-true
   logger:
     class_path: llm_training.overrides.wandb.WandbLogger
     init_args:
-      name: phi-3-mini-128k-instruct_it_example
+      name: phi-3-mini-128k-instruct_dpo_example
       job_type: example
       project: llm-training
       save_dir: logs
       save_code: true
-  max_epochs: 1
+  max_epochs: 3
   val_check_interval: null
   accumulate_grad_batches: 1
   gradient_clip_val: 1.0
@@ -28,41 +29,38 @@ trainer:
         save_top_k: 1
 
 model:
-  class_path: llm_training.models.hf_causal_lm.HFCausalLM
+  class_path: llm_training.lms.DPO
   init_args.config:
-    hf_path: microsoft/Phi-3-mini-128k-instruct
-    hf_model_kwargs:
-      torch_dtype: bfloat16
-      attn_implementation: flash_attention_2
-    enable_gradient_checkpointing: true
+    model:
+      model_class: llm_training.models.Phi3
+      model_config:
+        hf_path: microsoft/Phi-3-mini-128k-instruct
+        torch_dtype: bfloat16
+        attn_implementation: flash_attention_2
+        enable_gradient_checkpointing: true
     
-    # neftune_alpha: 5.0
+    beta: 0.1
+    label_smoothing: 0.0
 
     optim:
       optimizer_class: deepspeed.ops.adam.FusedAdam
       optimizer_kwargs:
-        lr: 1e-5
+        lr: 1e-6
       lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
       lr_scheduler_kwargs:
         num_warmup_steps: 100
-        min_lr: 1e-6
+        min_lr: 1e-7
 
 data:
-  class_path: llm_training.data.InstructionTuningDataModule
+  class_path: llm_training.data.PreferenceTuningDataModule
   init_args.config:
     dataset_kwargs:
-      path: ShinoharaHare/Infinity-Instruct-Reformatted
-      name: "0625"
-    pre_processed_data_path: null
+      path: trl-internal-testing/hh-rlhf-helpful-base-trl-style
     tokenizer:
       class_path: HFTokenizer
       init_args:
         path: microsoft/Phi-3-mini-128k-instruct
     batch_size: 1
-    add_default_system_prompt_rate: 0.0
-    default_system_prompt: ""
-    chat_template: phi-3
-    concat_method: GROUP_BY_LENGTH
     max_length: 4096
     pad_to_multiple_of: 64
     validation_split: null
