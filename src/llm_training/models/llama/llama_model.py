@@ -106,7 +106,7 @@ class Llama(HFCompatModel):
             attention_mask=attention_mask
         )
 
-    def get_input_embeds(self, input_ids: torch.Tensor) -> torch.Tensor:
+    def get_inputs_embeds(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
     
     def forward(

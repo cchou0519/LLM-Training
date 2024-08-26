@@ -4,7 +4,7 @@ import torch
 
 
 class CausalLMProto(Protocol):
-    def get_input_embeds(self, input_ids: torch.Tensor) -> torch.Tensor: ...
+    def get_inputs_embeds(self, input_ids: torch.Tensor) -> torch.Tensor: ...
 
     def __call__(
         self,

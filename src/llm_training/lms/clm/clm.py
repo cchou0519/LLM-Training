@@ -48,7 +48,7 @@ class CLM(BaseLightningModule):
         )
 
     def get_noisy_embeddings(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        inputs_embeds = self.model.get_input_embeds(input_ids)
+        inputs_embeds = self.model.get_inputs_embeds(input_ids)
         noise = torch.zeros_like(inputs_embeds).uniform_(-1, 1)
         input_lengths = torch.sum(attention_mask, 1)
         delta = noise * attention_mask.unsqueeze(2)
@@ -66,7 +66,7 @@ class CLM(BaseLightningModule):
             logits = self.model(
                 attention_mask=batch['attention_mask'],
                 position_ids=batch.get('position_ids', None),
-                input_embeds=self.get_noisy_embeddings(batch['input_ids'], batch['attention_mask'])
+                inputs_embeds=self.get_noisy_embeddings(batch['input_ids'], batch['attention_mask'])
             )
 
             self.log('NEFTune Alpha', self.config.neftune_alpha)
