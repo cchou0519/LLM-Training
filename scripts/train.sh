@@ -26,7 +26,6 @@ COMMAND=${COMMAND[@]}
 echo $COMMAND
 
 SBATCH_ARGS=(
-    --job-name $JOB_NAME
     --partition $PARTITION
     --gpus-per-node $GPUS_PER_NODE
     --cpus-per-task $CPUS_PER_TASK
