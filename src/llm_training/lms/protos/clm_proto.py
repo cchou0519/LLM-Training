@@ -1,10 +1,12 @@
 from typing import Protocol
 
 import torch
-
+from torch import nn
 
 class CausalLMProto(Protocol):
-    def get_inputs_embeds(self, input_ids: torch.Tensor) -> torch.Tensor: ...
+    def get_input_embeddings(self) -> nn.Embedding: ...
+    
+    def get_outut_embeddings(self) -> nn.Linear: ...
 
     def __call__(
         self,

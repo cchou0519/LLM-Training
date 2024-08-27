@@ -45,6 +45,25 @@ class DPO(BaseLightningModule):
         self.model = get_model(self.config.model)
         self.ref_model = get_model(self.config.ref_model or self.config.model)
         self.ref_model.eval().requires_grad_(False)
+
+    def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
+        assert self.model.no_split_modules
+        assert self.ref_model.no_split_modules
+
+        self.model = self.fsdp_wrap_model(
+            self.model,
+            'model',
+            state_dict,
+            self.model.no_split_modules
+        )
+        
+        self.ref_model = self.fsdp_wrap_model(
+            self.ref_model,
+            'ref_model',
+            state_dict,
+            self.ref_model.no_split_modules,
+            training=False
+        )
     
     def compute_loss(
         self,

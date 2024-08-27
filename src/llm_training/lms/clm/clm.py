@@ -9,7 +9,7 @@ from llm_training.lms.utils import get_model
 from llm_training.metrics import ConsumedSamples, ConsumedTokens
 from llm_training.models.base_model.base_model import BaseModel
 from llm_training.ops import cross_entropy, shift_labels
-
+from torch import nn
 from .clm_config import CLMConfig
 
 
@@ -37,8 +37,37 @@ class CLM(BaseLightningModule):
         state_dict = {f'model.{k}': v for k, v in state_dict.items()}
         return state_dict
 
+    def neftune_forward_hook(
+        self,
+        module: nn.Module,
+        input: torch.Tensor,
+        output: torch.Tensor
+    ) -> torch.Tensor:
+        if module.training:
+            attention_mask = getattr(self, '_current_attention_mask', None)
+            if attention_mask is None:
+                attention_mask = torch.ones_like(input)
+            attention_mask = attention_mask.bool().long()
+
+            noise = torch.zeros_like(output).uniform_(-1, 1)
+            input_lengths = attention_mask.sum(1)
+            delta = noise * attention_mask.unsqueeze(2)
+            dims = input_lengths * output.size(-1)
+            magnitude = self.config.neftune_alpha / torch.sqrt(dims)
+            delta = (delta * magnitude.view(-1, 1, 1)).detach()
+            output = output + delta
+        return output
+
     def configure_model(self) -> None:
         self.model = get_model(self.config.model)
+
+        if self.config.neftune_alpha is not None:
+            embedding = self.model.get_input_embeddings()
+            embedding.register_forward_hook(self.neftune_forward_hook)
+
+    def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
+        assert self.model.no_split_modules
+        self.model = self.fsdp_wrap_model(self.model, 'model', state_dict, self.model.no_split_modules)
 
     def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return cross_entropy(
@@ -47,35 +76,21 @@ class CLM(BaseLightningModule):
             ignore_index=self.config.ignore_index
         )
 
-    def get_noisy_embeddings(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        inputs_embeds = self.model.get_inputs_embeds(input_ids)
-        noise = torch.zeros_like(inputs_embeds).uniform_(-1, 1)
-        input_lengths = torch.sum(attention_mask, 1)
-        delta = noise * attention_mask.unsqueeze(2)
-        dims = input_lengths * inputs_embeds.size(-1)
-        magnitude = self.config.neftune_alpha / torch.sqrt(dims)
-        delta = (delta * magnitude.view(-1, 1, 1)).detach()
-        inputs_embeds += delta
-        inputs_embeds.requires_grad_()
-        return inputs_embeds
-
     def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         labels = shift_labels(batch['labels'], self.config.ignore_index)
-    
-        if self.config.neftune_alpha is not None:
-            logits = self.model(
-                attention_mask=batch['attention_mask'],
-                position_ids=batch.get('position_ids', None),
-                inputs_embeds=self.get_noisy_embeddings(batch['input_ids'], batch['attention_mask'])
-            )
 
+        if self.config.neftune_alpha is not None:
+            self._current_attention_mask = batch['attention_mask']
+
+        logits = self.model(
+            input_ids=batch['input_ids'],
+            attention_mask=batch['attention_mask'],
+            position_ids=batch.get('position_ids', None)
+        )
+
+        if self.config.neftune_alpha is not None:
             self.log('NEFTune Alpha', self.config.neftune_alpha)
-        else:
-            logits = self.model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                position_ids=batch.get('position_ids', None)
-            )
+            self._current_attention_mask = None
 
         loss = self.compute_loss(logits, labels)
 
@@ -99,7 +114,7 @@ class CLM(BaseLightningModule):
     def validation_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int, dataloader_idx: int = 0):
         batch_size = batch['input_ids'].size(0)
         labels = shift_labels(batch['labels'], self.config.ignore_index)
-        logits = self(
+        logits = self.model(
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
             position_ids=batch.get('position_ids', None)
