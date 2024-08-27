@@ -27,6 +27,8 @@ class Llama(HFCompatModel):
     hf_config_class = HFLlamaConfig
     hf_model_class = LlamaForCausalLM
 
+    no_split_modules = ['LlamaDecoderLayer']
+
     def __init__(self, config: LlamaConfig) -> None:
         super().__init__(config)
 
@@ -42,7 +44,7 @@ class Llama(HFCompatModel):
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-    def _init_weights(self, module: nn.Module):
+    def _init_weights_impl(self, module: nn.Module):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=std)
@@ -106,9 +108,12 @@ class Llama(HFCompatModel):
             attention_mask=attention_mask
         )
 
-    def get_inputs_embeds(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.embed_tokens(input_ids)
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.embed_tokens
     
+    def get_outut_embeddings(self) -> nn.Linear:
+        return self.lm_head
+
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
@@ -165,13 +170,6 @@ class Llama(HFCompatModel):
 
     @copy_method_signature(forward)
     def __call__(): ...
-
-    def get_hf_model(self) -> LlamaForCausalLM:
-        hf_model = super().get_hf_model()
-        for m in hf_model.modules():
-            if hasattr(m, 'rotary_emb'):
-                m.rotary_emb = m.rotary_emb.__class__(config=hf_model.config)
-        return hf_model
 
 
 class LlamaRMSNorm(nn.Module):

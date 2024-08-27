@@ -1,4 +1,5 @@
 import torch
+from accelerate import init_empty_weights
 from transformers import (AutoConfig, AutoModel, AutoTokenizer,
                           PretrainedConfig, PreTrainedModel,
                           PreTrainedTokenizerBase)
@@ -96,7 +97,7 @@ class HFCompatModel(BaseModel):
         torch_dtype = self.config.torch_dtype
         torch_dtype = t if torch_dtype == 'auto' else torch_dtype
         torch.set_default_dtype(torch_dtype)
-        with torch.device('meta'):
+        with init_empty_weights(include_buffers=False):
             hf_model = self.construct_hf_model()
         torch.set_default_dtype(t)
 

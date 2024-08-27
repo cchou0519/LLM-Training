@@ -25,6 +25,8 @@ class Phi3(HFCompatModel):
     hf_config_class = HFPhi3Config
     hf_model_class = Phi3ForCausalLM
 
+    no_split_modules = ['Phi3DecoderLayer']
+
     def __init__(self, config: Phi3Config) -> None:
         super().__init__(config)
 
@@ -63,7 +65,7 @@ class Phi3(HFCompatModel):
         self.config.eos_token_id = hf_config.eos_token_id
         self.config.sliding_window = hf_config.sliding_window
 
-    def _init_weights(self, module: nn.Module) -> None:
+    def _init_weights_impl(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
@@ -115,8 +117,11 @@ class Phi3(HFCompatModel):
             attention_mask=attention_mask
         )
 
-    def get_inputs_embeds(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.embed_tokens(input_ids)
+    def get_input_embeddings(self) -> nn.Embedding:
+        return self.embed_tokens
+    
+    def get_outut_embeddings(self) -> nn.Linear:
+        return self.lm_head
 
     def forward(
         self,
@@ -193,12 +198,6 @@ class Phi3(HFCompatModel):
     @copy_method_signature(forward)
     def __call__(): ...
 
-    def get_hf_model(self) -> Phi3ForCausalLM:
-        hf_model = super().get_hf_model()
-        for m in hf_model.modules():
-            if hasattr(m, 'rotary_emb'):
-                m._init_rope()
-        return hf_model
 
 class Phi3RMSNorm(nn.Module):
     def __init__(self, config: Phi3Config) -> None:
@@ -308,7 +307,7 @@ class Phi3LongRoPEScaledRotaryEmbedding(Phi3RotaryEmbedding):
         # in FP32. They are applied (multiplied) in FP32 as well.
         self.current_rope_size = math.ceil(seq_len / 4096) * 4096
 
-        t = torch.arange(self.current_rope_size, device=self.inv_freq.device, dtype=torch.int64).float()
+        t = torch.arange(self.current_rope_size, device=self.long_inv_freq.device, dtype=torch.int64).float()
         # Long sequences
         freqs = torch.outer(t, self.long_inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)

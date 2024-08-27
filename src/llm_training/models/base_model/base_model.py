@@ -12,6 +12,7 @@ class BaseModel(nn.Module):
     _init_weights: ClassVar[bool] = True
 
     config_class: type[BaseModelConfig] = BaseModelConfig
+    no_split_modules: list[str] = []
 
     def __init__(self, config: BaseModelConfig) -> None:
         super().__init__()
@@ -19,7 +20,7 @@ class BaseModel(nn.Module):
         self.config = config
 
         if self._init_weights:
-            self.apply(self._init_weights)
+            self.init_weights()
     
     @property
     def has_pre_trained_weights(self) -> bool:
@@ -28,7 +29,10 @@ class BaseModel(nn.Module):
     def get_pre_trained_weights(self) -> dict[str, torch.Tensor]:
         return safetensors.torch.load_file(self.config.pre_trained_weights)
 
-    def _init_weights(self, module: nn.Module) -> None: ...
+    def _init_weights_impl(self, module: nn.Module) -> None: ...
+
+    def init_weights(self) -> None:
+        self.apply(self._init_weights_impl)
 
     @classmethod
     @contextmanager
