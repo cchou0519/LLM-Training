@@ -1,6 +1,6 @@
 [project]
 name = "llm_training"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
   "accelerate>=0.28.0",
   "datasets>=2.20.0",
