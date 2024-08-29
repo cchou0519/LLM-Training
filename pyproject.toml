@@ -1,6 +1,6 @@
 [project]
 name = "llm_training"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
   "accelerate>=0.28.0",
   "datasets>=2.20.0",
@@ -24,7 +24,7 @@ requires-python = ">=3.10"
 [project.optional-dependencies]
 peft = ["peft>=0.11.1"]
 
-deepspeed = ["deepspeed>=0.14.3"]
+deepspeed = ["deepspeed==0.14.3"]
 
 [project.scripts]
 llm-training = "llm_training.cli.main:main"
