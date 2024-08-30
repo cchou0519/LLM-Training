@@ -13,7 +13,7 @@ else:
     try:
         from peft import PeftConfig
     except ImportError:
-        PeftConfig = dict[str, Any]
+        PeftConfig = dict
 
 
 try:
@@ -38,7 +38,7 @@ class LitPhi3Config(HFCompatModelConfig):
     initializer_range: float = 0.02
     rms_norm_eps: float = 1e-5
     rope_theta: float = 10000.0
-    rope_scaling: dict[str, Any] | None = None
+    rope_scaling: dict | None = None
     bos_token_id: int = 1
     eos_token_id: int = 32000
     pad_token_id: int = 32000
@@ -51,7 +51,7 @@ class LitPhi3Config(HFCompatModelConfig):
     attention_compute_dtype: torch.dtype | str | None = None
     rms_norm_implementation: RMSNormImplementation = 'torch'
 
-    peft_config: PeftConfig | dict[str, Any] | None = None
+    peft_config: PeftConfig | dict | None = None
     
     @property
     def _attention_implementation(self) -> str:

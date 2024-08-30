@@ -14,7 +14,7 @@ else:
     try:
         from peft import PeftConfig
     except ImportError:
-        PeftConfig = dict[str, Any]
+        PeftConfig = dict
 
 
 try:
@@ -26,8 +26,8 @@ except ImportError:
 class HFCausalLMConfig(HFCompatModelConfig):
     neftune_alpha: float | None = None
     generation_config: GenerationConfig | dict | None = None
-    peft_config: PeftConfig | dict[str, Any] | None = None # type: ignore
-    patcher_config: dict[str, Any] | Literal[False] | None = field(default_factory=dict)
+    peft_config: PeftConfig | dict | None = None # type: ignore
+    patcher_config: dict | Literal[False] | None = field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
