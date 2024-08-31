@@ -1,6 +1,7 @@
 from typing import Any
 
 import torch
+from torch import nn
 from torchmetrics.text import Perplexity
 
 from llm_training.lms.base_lm import BaseLightningModule
@@ -8,8 +9,9 @@ from llm_training.lms.protos import CausalLMProto
 from llm_training.lms.utils import get_model
 from llm_training.metrics import ConsumedSamples, ConsumedTokens
 from llm_training.models.base_model.base_model import BaseModel
-from llm_training.ops import cross_entropy, shift_labels
-from torch import nn
+from llm_training.ops import shift_labels
+from llm_training.ops.liger import cross_entropy
+
 from .clm_config import CLMConfig
 
 
@@ -47,7 +49,9 @@ class CLM(BaseLightningModule):
             attention_mask = getattr(self, '_current_attention_mask', None)
             if attention_mask is None:
                 attention_mask = torch.ones_like(input)
-            attention_mask = attention_mask.bool().long()
+                
+            # packed attention mask
+            attention_mask = attention_mask.bool().to(output.dtype)
 
             noise = torch.zeros_like(output).uniform_(-1, 1)
             input_lengths = attention_mask.sum(1)
@@ -73,10 +77,11 @@ class CLM(BaseLightningModule):
         return cross_entropy(
             logits,
             labels,
-            ignore_index=self.config.ignore_index
+            ignore_index=self.config.ignore_index,
+            reduction='mean'
         )
 
-    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:        
         labels = shift_labels(batch['labels'], self.config.ignore_index)
 
         if self.config.neftune_alpha is not None:
@@ -92,16 +97,16 @@ class CLM(BaseLightningModule):
             self.log('NEFTune Alpha', self.config.neftune_alpha)
             self._current_attention_mask = None
 
+        # compute CE loss after ppl, because some CE kernels lead to wrong ppl.
+        self.train_perplexity(logits, labels)
         loss = self.compute_loss(logits, labels)
 
         self.log('loss', loss, prog_bar=True, logger=False)
         self.log('Loss/Train/Step', loss)
+        self.log('Perplexity/Train/Step', self.train_perplexity)
 
         if self.grad_norm is not None:
             self.log('Gradient Norm', self.grad_norm)
-
-        self.train_perplexity(logits, labels)
-        self.log('Perplexity/Train/Step', self.train_perplexity)
 
         self.consumed_samples.update(labels)
         self.consumed_tokens.update(labels)
@@ -120,9 +125,9 @@ class CLM(BaseLightningModule):
             position_ids=batch.get('position_ids', None)
         )
 
+        self.val_perplexity.update(logits, labels)
         loss = self.compute_loss(logits, labels)
 
-        self.val_perplexity.update(logits, labels)
         self.log('Loss/Val', loss, batch_size=batch_size, sync_dist=True)
         self.log('Perplexity/Val', self.val_perplexity)
 

@@ -1,8 +1,6 @@
 
 from typing import Any, Literal
 
-import torch
-
 from llm_training.models.hf_compat_model import HFCompatModelConfig
 
 

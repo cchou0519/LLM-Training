@@ -7,12 +7,12 @@ import torch.utils.checkpoint
 from torch import nn
 from transformers import LlamaConfig as HFLlamaConfig
 from transformers import LlamaForCausalLM
-from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 
 from llm_training.models.hf_compat_model import HFCompatModel
-from llm_training.ops import *
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
+from llm_training.ops.liger import *
+from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
 from llm_training.utils.decorators import copy_method_signature
 
 from .llama_config import LlamaConfig
@@ -194,70 +194,122 @@ class LlamaRMSNorm(nn.Module):
 
 class LlamaRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor
-    cos_cached: torch.Tensor
-    sin_cached: torch.Tensor
-
-    def __init__(self, config: LlamaConfig):
+    cos: torch.Tensor
+    sin: torch.Tensor
+    
+    def __init__(self, config: LlamaConfig) -> None:
         super().__init__()
 
         self.config = config
-
+        
         if config.rope_scaling is not None:
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
+            self.rope_type = config.rope_scaling.get('rope_type', config.rope_scaling.get('type'))
         else:
-            self.rope_type = "default"
+            self.rope_type = 'default'
+        
+        self.rope_config = RoPEConfig(
+            type=self.rope_type,
+            base=config.rope_theta,
+            dim=config.hidden_size // config.num_attention_heads,
+            max_position_embeddings=config.max_position_embeddings,
+            scaling_config=config.rope_scaling
+        )
 
-        self.current_rope_size = min(4096, self.config.max_position_embeddings)
-
-        self.max_seq_len_cached = config.max_position_embeddings
+        self.max_seq_len_cached = 0
         self.original_max_seq_len = config.max_position_embeddings
 
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, None)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.attention_scaling = None
+        self.register_buffer('inv_freq', None, persistent=False)
+
+        self._set_cos_sin_cache(
+            self.original_max_seq_len,
+            device=torch.device('cpu'),
+            dtype=torch.float
+        )
+
         self.original_inv_freq = self.inv_freq
 
-    def _dynamic_frequency_update(self, position_ids, device):
-        """
-        dynamic RoPE layers should recompute `inv_freq` in the following situations:
-        1 - growing beyond the cached sequence length (allow scaling)
-        2 - the current sequence length is in the original scale (avoid losing precision with small sequences)
-        """
-        seq_len = torch.max(position_ids) + 1
-        if seq_len > self.max_seq_len_cached:  # growth
-            inv_freq, self.attention_scaling = self.rope_init_fn(
-                self.config, device, seq_len=seq_len
-            )
-            self.register_buffer("inv_freq", inv_freq, persistent=False)  # TODO joao: may break with compilation
+    def _set_inv_freq_cache(self, seq_len: int, device: torch.device) -> None:
+        if self.rope_type == 'dynamic':
+            if seq_len > self.max_seq_len_cached:  # growth
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)  # TODO joao: may break with compilation
+                self.max_seq_len_cached = seq_len
+            
+            if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
+                self.register_buffer('inv_freq', self.original_inv_freq, persistent=False)
+                self.max_seq_len_cached = self.original_max_seq_len
+        elif self.rope_type == 'longrope':
+            if seq_len > self.max_seq_len_cached:
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)
+            elif seq_len <= self.original_max_seq_len:
+                self.register_buffer('inv_freq', self.original_inv_freq, persistent=False)
+            self.max_seq_len_cached = seq_len
+        else:
+            if self.inv_freq is None or self.attention_scaling is None:
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)
+
             self.max_seq_len_cached = seq_len
 
-        if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
-            self.register_buffer("inv_freq", self.original_inv_freq, persistent=False)
-            self.max_seq_len_cached = self.original_max_seq_len
+        if self.inv_freq.device != device:
+            self.inv_freq.data = self.inv_freq.data.to(device)
+    
+    def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> None:
+        if seq_len <= self.max_seq_len_cached and seq_len >= self.original_max_seq_len:
+            return
+
+        seq_len = math.ceil(seq_len / 4096) * 4096
+
+        self._set_inv_freq_cache(seq_len, device)
+        
+        device_type = device.type if isinstance(device.type, str) and device.type != 'mps' else 'cpu'
+        with torch.autocast(device_type=device_type, enabled=False):
+            t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).float()
+            freqs = torch.outer(t, self.inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1)
+
+        cos = emb.cos() * self.attention_scaling
+        sin = emb.sin() * self.attention_scaling
+        cos = cos.to(dtype=dtype, device=device)
+        sin = sin.to(dtype=dtype, device=device)
+
+        self.register_buffer('cos', cos, persistent=False)
+        self.register_buffer('sin', sin, persistent=False)
 
     @torch.no_grad()
-    def forward(self, x, position_ids):
-        if "dynamic" in self.rope_type:
-            self._dynamic_frequency_update(position_ids, device=x.device)
+    def forward(
+        self,
+        x: torch.Tensor,
+        position_ids: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        seq_len = position_ids.max() + 1
 
-        # Core RoPE block
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-        position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 (see https://github.com/huggingface/transformers/pull/29285)
-        device_type = x.device.type
-        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
-        with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            cos = emb.cos()
-            sin = emb.sin()
-
-        # Advanced RoPE types (e.g. yarn) apply a post-processing scaling factor, equivalent to scaling attention
-        cos = cos * self.attention_scaling
-        sin = sin * self.attention_scaling
-
-        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+        self._set_cos_sin_cache(
+            seq_len.item(),
+            device=x.device,
+            dtype=x.dtype
+        )
+        
+        return (
+            self.cos[position_ids].to(x),
+            self.sin[position_ids].to(x)
+        )
 
 
 class LlamaMLP(nn.Module):
@@ -403,7 +455,7 @@ class LlamaAttention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -507,7 +559,7 @@ class LlamaFlashAttention2(LlamaAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         attn_output = self.core_attention_forward(
             query_states,
@@ -584,7 +636,7 @@ class LlamaSdpaAttention(LlamaAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)

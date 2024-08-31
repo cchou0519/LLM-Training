@@ -71,7 +71,8 @@ class ResumableDistributedSampler(DistributedSampler):
             is_used = index in self.used_indices
             is_padding = i >= (len(self.dataset) // self.num_replicas)
 
-            self.used_indices.add(index)
+            if not is_padding:
+                self.used_indices.add(index)
 
             if i + 1 == self.num_samples:
                 self.used_indices.clear()

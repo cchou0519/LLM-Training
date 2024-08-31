@@ -1,3 +1,4 @@
+import gc
 import inspect
 import logging
 from contextlib import contextmanager
@@ -77,7 +78,7 @@ class BaseLightningModule(LightningModule):
     def should_load_pre_trained_weights(self) -> bool:
         return (
             self.has_pre_trained_weights
-            and self.config.load_pre_trained_weights
+            and self.config.load_weights
             and not self.is_loading_from_checkpoint
         )
     
@@ -86,7 +87,7 @@ class BaseLightningModule(LightningModule):
         return (
             self.config.init_weights
             and not self.is_loading_from_checkpoint
-            and not self.config.load_pre_trained_weights
+            and not self.config.load_weights
         )
     
     @property
@@ -125,10 +126,14 @@ class BaseLightningModule(LightningModule):
         desc = 'Loading weights'
         if name is not None:
             desc = f'{desc} ({name})'
+        
+        disable = self.global_rank != 0
+        disable |= not self.should_initialize_weights and not self.should_load_pre_trained_weights
+
         return tqdm(
             desc=desc,
             total=sum(1 for _ in model.parameters()),
-            disable=self.global_rank != 0
+            disable=disable
         )
 
     def _ds_z3_load_state_dict(self, state_dict: dict[str, torch.Tensor] | None):
@@ -254,6 +259,9 @@ class BaseLightningModule(LightningModule):
                     state_dict = self.get_pre_trained_weights()
 
             self.on_fsdp_wrap_model(state_dict)
+            
+            del state_dict
+            gc.collect()
 
             self.configure_gradient_clipping = self._fsdp_configure_gradient_clipping
     

@@ -9,9 +9,10 @@ from transformers import Phi3Config as HFPhi3Config
 from transformers import Phi3ForCausalLM
 
 from llm_training.models.hf_compat_model import HFCompatModel
-from llm_training.ops import *
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
+from llm_training.ops.liger import *
+from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
 from llm_training.utils.decorators import copy_method_signature
 
 from .phi3_config import Phi3Config
@@ -31,7 +32,7 @@ class Phi3(HFCompatModel):
         super().__init__(config)
 
         config = self.config
-        self.rotary_emb = self._init_rotary_emb()
+        self.rotary_emb = Phi3RotaryEmbedding(config)
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.embed_dropout = nn.Dropout(config.embd_pdrop)
         self.layers = nn.ModuleList(
@@ -80,16 +81,6 @@ class Phi3(HFCompatModel):
 
     def convert_state_dict_to_hf(self, state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {('' if 'lm_head' in k else 'model.') + k: v for k, v in state_dict.items()}
-
-    def _init_rotary_emb(self) -> "Phi3RotaryEmbedding":
-        rope_class = Phi3RotaryEmbedding
-        if self.config.rope_scaling is not None:
-            scaling_type = self.config.rope_scaling['type']
-            if scaling_type == 'longrope':
-                rope_class = Phi3LongRoPEScaledRotaryEmbedding
-            else:
-                raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
-        return rope_class(self.config)
 
     def forward_decoder_layer(
         self,
@@ -214,127 +205,125 @@ class Phi3RMSNorm(nn.Module):
 
 class Phi3RotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor
-    cos_cached: torch.Tensor
-    sin_cached: torch.Tensor
-
-    def __init__(self, config: Phi3Config):
+    cos: torch.Tensor
+    sin: torch.Tensor
+    
+    def __init__(self, config: Phi3Config) -> None:
         super().__init__()
 
-        self.dim = config.hidden_size // config.num_attention_heads
-        self.max_position_embeddings = config.max_position_embeddings
-        self.base = config.rope_theta
-        self.current_rope_size = 0
-
-    def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype):
-        # Note: on the original Llama codebase, these tensors are created on the target device (and not on CPU) and
-        # in FP32. They are applied (multiplied) in FP32 as well.
-        self.current_rope_size = math.ceil(seq_len / 4096) * 4096
-        inv_freq = 1.0 / (
-            self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device='cpu').float() / self.dim)
+        self.config = config
+        
+        if config.rope_scaling is not None:
+            self.rope_type = config.rope_scaling.get('rope_type', config.rope_scaling.get('type'))
+            scaling_config = config.rope_scaling.copy()
+            scaling_config.setdefault('factor', config.max_position_embeddings / config.original_max_position_embeddings)
+        else:
+            self.rope_type = 'default'
+            scaling_config = None
+        
+        self.rope_config = RoPEConfig(
+            type=self.rope_type,
+            base=config.rope_theta,
+            dim=config.hidden_size // config.num_attention_heads,
+            max_position_embeddings=config.original_max_position_embeddings,
+            scaling_config=scaling_config
         )
-        t = torch.arange(self.current_rope_size, device='cpu', dtype=torch.int64).float()
 
-        freqs = torch.outer(t, inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
+        self.max_seq_len_cached = 0
+        self.original_max_seq_len = config.original_max_position_embeddings
 
-        self.register_buffer('inv_freq', inv_freq, persistent=False)
-        self.register_buffer('cos_cached', emb.cos().to(dtype=dtype, device=device, non_blocking=True), persistent=False)
-        self.register_buffer('sin_cached', emb.sin().to(dtype=dtype, device=device, non_blocking=True), persistent=False)
+        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
+        self.attention_scaling = None
+        self.register_buffer('inv_freq', None, persistent=False)
+
+        self._set_cos_sin_cache(
+            self.original_max_seq_len,
+            device=torch.device('cpu'),
+            dtype=torch.float
+        )
+
+        self.original_inv_freq = self.inv_freq
+
+    def _set_inv_freq_cache(self, seq_len: int, device: torch.device) -> None:
+        if self.rope_type == 'dynamic':
+            if seq_len > self.max_seq_len_cached:  # growth
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)  # TODO joao: may break with compilation
+                self.max_seq_len_cached = seq_len
+            
+            if seq_len < self.original_max_seq_len and self.max_seq_len_cached > self.original_max_seq_len:  # reset
+                self.register_buffer('inv_freq', self.original_inv_freq, persistent=False)
+                self.max_seq_len_cached = self.original_max_seq_len
+        elif self.rope_type == 'longrope':
+            if seq_len > self.max_seq_len_cached:
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)
+            elif seq_len <= self.original_max_seq_len:
+                self.register_buffer('inv_freq', self.original_inv_freq, persistent=False)
+            self.max_seq_len_cached = seq_len
+        else:
+            if self.inv_freq is None or self.attention_scaling is None:
+                inv_freq, self.attention_scaling = self.rope_init_fn(
+                    self.rope_config,
+                    device=device,
+                    seq_len=seq_len
+                )
+                self.register_buffer('inv_freq', inv_freq, persistent=False)
+
+            self.max_seq_len_cached = seq_len
+        
+        if self.inv_freq.device != device:
+            self.inv_freq.data = self.inv_freq.data.to(device)
+    
+    def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> None:
+        if seq_len <= self.max_seq_len_cached and seq_len >= self.original_max_seq_len:
+            return
+
+        seq_len = math.ceil(seq_len / 4096) * 4096
+
+        self._set_inv_freq_cache(seq_len, device)
+        
+        device_type = device.type if isinstance(device.type, str) and device.type != 'mps' else 'cpu'
+        with torch.autocast(device_type=device_type, enabled=False):
+            t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.int64).float()
+            freqs = torch.outer(t, self.inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1)
+
+        cos = emb.cos() * self.attention_scaling
+        sin = emb.sin() * self.attention_scaling
+        cos = cos.to(dtype=dtype, device=device)
+        sin = sin.to(dtype=dtype, device=device)
+
+        self.register_buffer('cos', cos, persistent=False)
+        self.register_buffer('sin', sin, persistent=False)
+
+    @torch.no_grad()
     def forward(
         self,
         x: torch.Tensor,
         position_ids: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         seq_len = position_ids.max() + 1
-        if seq_len > self.current_rope_size:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
 
-        return (
-            self.cos_cached[position_ids].to(x),
-            self.sin_cached[position_ids].to(x)
+        self._set_cos_sin_cache(
+            seq_len.item(),
+            device=x.device,
+            dtype=x.dtype
         )
-
-
-class Phi3LongRoPEScaledRotaryEmbedding(Phi3RotaryEmbedding):
-    short_inv_freq: torch.Tensor
-    short_cos_cached: torch.Tensor
-    short_sin_cached: torch.Tensor
-
-    long_inv_freq: torch.Tensor
-    long_cos_cached: torch.Tensor
-    long_sin_cached: torch.Tensor
-
-    def __init__(self, config: Phi3Config):
-        super().__init__(config)
-
-        self.short_factor = config.rope_scaling['short_factor']
-        self.long_factor = config.rope_scaling['long_factor']
-        self.original_max_position_embeddings = config.original_max_position_embeddings
-        self.current_rope_size = min(self.original_max_position_embeddings, self.max_position_embeddings)
-
-        inv_freq_shape = torch.arange(0, self.dim, 2, dtype=torch.int64, device='cpu').float() / self.dim
-        short_factor = torch.tensor(self.short_factor, device='cpu', dtype=torch.float32)
-        long_factor  = torch.tensor(self.long_factor,  device='cpu', dtype=torch.float32)
-        short_inv_freq = 1.0 / (short_factor * self.base ** inv_freq_shape)
-        long_inv_freq  = 1.0 / (long_factor  * self.base ** inv_freq_shape)
-
-        scale = self.max_position_embeddings / self.original_max_position_embeddings
-        if scale <= 1.0:
-            scaling_factor = 1.0
-        else:
-            scaling_factor = math.sqrt(1 + math.log(scale) / math.log(self.original_max_position_embeddings))
         
-        self.scaling_factor = scaling_factor
-
-        self.register_buffer('short_inv_freq', short_inv_freq, persistent=False)
-        self.register_buffer('long_inv_freq', long_inv_freq, persistent=False)
-
-        self._set_short_cos_sin_cache()
-
-    def _set_short_cos_sin_cache(self):
-        t = torch.arange(self.original_max_position_embeddings, device=self.short_inv_freq.device, dtype=torch.int64).float()
-        freqs = torch.outer(t, self.short_inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos_cached = emb.cos() * self.scaling_factor
-        sin_cached = emb.sin() * self.scaling_factor
-        self.register_buffer('short_cos_cached', cos_cached, persistent=False)
-        self.register_buffer('short_sin_cached', sin_cached, persistent=False)
-
-    def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype):
-        # Note: on the original Llama codebase, these tensors are created on the target device (and not on CPU) and
-        # in FP32. They are applied (multiplied) in FP32 as well.
-        self.current_rope_size = math.ceil(seq_len / 4096) * 4096
-
-        t = torch.arange(self.current_rope_size, device=self.long_inv_freq.device, dtype=torch.int64).float()
-        # Long sequences
-        freqs = torch.outer(t, self.long_inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos_cached = (emb.cos() * self.scaling_factor).to(dtype=dtype, device=device, non_blocking=True)
-        sin_cached = (emb.sin() * self.scaling_factor).to(dtype=dtype, device=device, non_blocking=True)
-        self.register_buffer('long_cos_cached', cos_cached, persistent=False)
-        self.register_buffer('long_sin_cached', sin_cached, persistent=False)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        position_ids: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        seq_len = position_ids.max() + 1
-        if seq_len > self.current_rope_size:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        if seq_len <= self.original_max_position_embeddings:
-            return (
-                self.short_cos_cached[position_ids].to(x),
-                self.short_sin_cached[position_ids].to(x)
-            )
-        else:
-            return (
-                self.long_cos_cached[position_ids].to(x),
-                self.long_sin_cached[position_ids].to(x)
-            )
+        return (
+            self.cos[position_ids].to(x),
+            self.sin[position_ids].to(x)
+        )
 
 
 class Phi3MLP(nn.Module):
@@ -514,7 +503,7 @@ class Phi3Attention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -563,7 +552,7 @@ class Phi3FlashAttention2(Phi3Attention):
 
         cos, sin = position_embeddings
 
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -649,7 +638,7 @@ class Phi3SdpaAttention(Phi3Attention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = fast_rope_embedding(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
