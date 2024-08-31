@@ -5,6 +5,7 @@ from typing import Any
 import fire
 import torch
 import yaml
+from accelerate import init_empty_weights
 from lightning import LightningDataModule, LightningModule
 from lightning.pytorch.cli import LightningArgumentParser
 
@@ -42,9 +43,9 @@ def main(
 
     assert isinstance(lightning_module, BaseLightningModule)
 
-    lightning_module.config.load_pre_trained_weights = False
+    lightning_module.config.load_weights = False
     lightning_module.config.init_weights = False
-    with torch.device('meta'):
+    with init_empty_weights(include_buffers=False):
         lightning_module.configure_model()
     
     incompatiable_keys = lightning_module.load_state_dict(checkpoint['state_dict'], strict=False, assign=True)
@@ -103,8 +104,7 @@ def convert_checkpoint(path: Path) -> dict[str, Any]:
 
 
 def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
-    from lightning.fabric.utilities.load import (_METADATA_FILENAME,
-                                                 _unflatten_dict)
+    from lightning.fabric.utilities.load import _METADATA_FILENAME
     from torch.distributed.checkpoint import FileSystemReader, load
     from torch.distributed.checkpoint.metadata import (BytesStorageMetadata,
                                                        TensorStorageMetadata)
@@ -133,9 +133,8 @@ def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
             raise NotImplementedError()
 
     load(state_dict=state_dict, storage_reader=reader)
-    key_map = {n: metadata.planner_data[n] for n in tensor_names}
-    state_dict = _unflatten_dict(state_dict, key_map=key_map)['model']
     
+    state_dict = {k.removeprefix('model.'): v for k, v in state_dict.items()}
     checkpoint = {'state_dict': state_dict}
     # This is the extra file saved by Fabric, with user data separate from weights and optimizer states
     extra_file = path / _METADATA_FILENAME
