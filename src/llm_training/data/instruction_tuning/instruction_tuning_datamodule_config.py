@@ -42,10 +42,8 @@ class InstructionTuningDataModuleConfig(HFBasedDataModuleConfig):
     @field_validator('default_system_prompt')
     @classmethod
     def validate_default_system_prompt(cls, value: str | None, info: ValidationInfo) -> str | None:
-        assert (
-            value is None or info.data['add_default_system_prompt_rate'] is not None,
+        assert value is None or info.data['add_default_system_prompt_rate'] is not None, \
             "Default system prompt must be set to use `add_default_system_prompt_rate`."
-        )
         return value
 
     @field_validator('overlong_handling_method')
