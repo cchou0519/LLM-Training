@@ -32,6 +32,9 @@ class HFCausalLM(HFCompatModel):
 
         self.hf_model = self.construct_hf_model()
 
+        if self.config.enable_gradient_checkpointing:
+            self.hf_model.gradient_checkpointing_enable({'use_reentrant': False})
+
     def convert_state_dict_from_hf(self, hf_state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {'hf_model.' + k: v for k, v in hf_state_dict.items()}
 
