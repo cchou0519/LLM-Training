@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import torch
@@ -13,6 +14,8 @@ from llm_training.ops import shift_labels
 from llm_training.ops.liger import cross_entropy
 
 from .clm_config import CLMConfig
+
+logger = logging.getLogger(__name__)
 
 
 class CLM(BaseLightningModule):
@@ -61,13 +64,20 @@ class CLM(BaseLightningModule):
             delta = (delta * magnitude.view(-1, 1, 1)).detach()
             output = output + delta
         return output
+    
+    def register_neftune_hook(self) -> None:
+        embedding = self.model.get_input_embeddings()
+        self._neftune_hook_handle = embedding.register_forward_hook(self.neftune_forward_hook)
 
     def configure_model(self) -> None:
         self.model = get_model(self.config.model)
 
+        if self.global_rank == 0:
+            logger.info(f'Config:\n{self.config}')
+            logger.info(f'Model:\n{self.model}')
+
         if self.config.neftune_alpha is not None:
-            embedding = self.model.get_input_embeddings()
-            embedding.register_forward_hook(self.neftune_forward_hook)
+            self.register_neftune_hook()
 
     def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
         assert self.model.no_split_modules
