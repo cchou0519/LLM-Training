@@ -38,6 +38,22 @@ data:
 python scripts/pre_process_pre_training_data.py -c <CONFIG_PATH>
 ```
 
+## Data Sampling
+
+`PreTrainingDataModule` also supports data sampling.
+You can include a `source` field in the dataset and set `sample_rate` in the config to sample data based on `source`. The `sample_rate` is a dictionary where the keys represent `source` and the values represent the sampling rates.
+
+The following config will downsample `source_1` by half and upsample `source_2` by 3 times.
+```yaml
+data:
+  class_path: llm_training.data.PreTrainingDataModule
+  init_args.config:
+    ...
+    sample_rate:
+      source_1: 0.5
+      source_2: 3.0
+```
+
 ## Example
 
 ```yaml
