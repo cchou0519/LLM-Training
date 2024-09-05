@@ -1,11 +1,10 @@
 import logging
-from dataclasses import KW_ONLY
 from enum import auto
-from pathlib import Path
 
+from pydantic import ValidationInfo, field_validator
 from transformers import PreTrainedTokenizerBase
 
-from llm_training.data.chat_templates import CHAT_TEMPLATES
+from llm_training.data.chat_templates import get_chat_template
 from llm_training.data.hf_based.hf_based_datamodule_config import \
     HFBasedDataModuleConfig
 from llm_training.utils.str_enum import StrEnum
@@ -24,32 +23,35 @@ class ConcatMethod(StrEnum):
 
 
 class InstructionTuningDataModuleConfig(HFBasedDataModuleConfig):
-    _: KW_ONLY
     tokenizer: PreTrainedTokenizerBase
     chat_template: str | None = None
     max_length: int | None = None
     overlong_handling_method: OverlongHandlingMethod | str = OverlongHandlingMethod.DROP
     concat_method: ConcatMethod | str = ConcatMethod.NO_CONCAT
     pad_to_multiple_of: int | None = None
-    add_default_system_prompt_rate: float = 0.0
+    add_default_system_prompt_rate: float | None = None
     default_system_prompt: str | None = None
 
-    def __post_init__(self):
-        super().__post_init__()
+    @field_validator('chat_template')
+    @classmethod
+    def validate_chat_template(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = get_chat_template(value)
+        return value
 
-        if self.chat_template is None:
-            logger.info(f'`chat_template` is not set, default template of the tokenizer will be used.')
-        elif Path(self.chat_template).exists():
-            logger.info(f'Found template file at `{self.chat_template}`.')
-            with open(self.chat_template) as f:
-                self.chat_template = f.read()
-        elif self.chat_template in CHAT_TEMPLATES:
-            logger.info(f'Using pre-defined chat template `{self.chat_template}`.')
-            self.chat_template = CHAT_TEMPLATES[self.chat_template]
-        else:
-            logger.warn('`chat_template` is being used directly as a template.\nIf this is not the behavior you expected, please change the value.')
+    @field_validator('default_system_prompt')
+    @classmethod
+    def validate_default_system_prompt(cls, value: str | None, info: ValidationInfo) -> str | None:
+        assert value is None or info.data['add_default_system_prompt_rate'] is not None, \
+            "Default system prompt must be set to use `add_default_system_prompt_rate`."
+        return value
 
-        self.overlong_handling_method = OverlongHandlingMethod(self.overlong_handling_method)
-        self.concat_method = ConcatMethod(self.concat_method)
+    @field_validator('overlong_handling_method')
+    @classmethod
+    def validate_overlong_handling_method(cls, value: OverlongHandlingMethod | str) -> OverlongHandlingMethod:
+        return OverlongHandlingMethod(value.lower())
 
-        assert self.add_default_system_prompt_rate == 0.0 or self.default_system_prompt is not None, "Default system prompt must be set to use `add_default_system_prompt_rate`."
+    @field_validator('concat_method')
+    @classmethod
+    def validate_concat_method(cls, value: ConcatMethod | str) -> ConcatMethod:
+        return ConcatMethod(value.lower())

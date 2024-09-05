@@ -5,25 +5,21 @@ from typing import Any
 import fire
 import torch
 import yaml
+from accelerate import init_empty_weights
 from lightning import LightningDataModule, LightningModule
 from lightning.pytorch.cli import LightningArgumentParser
-from transformers import PretrainedConfig, PreTrainedModel
-from transformers.modeling_utils import no_init_weights
-from transformers.models.auto.auto_factory import _BaseAutoModelClass
 
-from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.data import *
+from llm_training.lms import BaseLightningModule
+from llm_training.models import HFCompatModel
 
 
 def main(
     checkpoint_path: str | Path,
     output_dir: str | Path | None = None,
     config_path: str | None = None,
-    eos_tokens: list[str] | None = (
-        None
-        # ['<|endoftext|>', '<|im_end|>'] # phi-2
-        # ['<|end_of_text|>', '<|eot_id|>'] # llama-3
-        # ['<|endoftext|>', '<|assistant|>', '<|end|>'] # phi-3
-    )
+    eos_tokens: list[str] | None = None,
+    dtype: torch.dtype | None = None
 ) -> None:
     checkpoint_path = Path(checkpoint_path)
 
@@ -40,29 +36,36 @@ def main(
             config = yaml.safe_load(f)
     else:
         config = checkpoint['config']
-    
-    model, datamodule = instantiate_model_and_datamodule(config)
-    
-    assert isinstance(model, HFCompatModel), f"{model.__class__} is not supported to be converted to HF version."
 
-    print('Constructing empty HF model')
-    hf_model = construct_hf_model(model.hf_model_class, model.load_hf_config())
+    dtype = dtype or get_dtype_from_config(config)
     
-    print('Converting state dict')
-    state_dict = checkpoint['state_dict']
-    state_dict = model.convert_state_dict_to_hf(state_dict)
-    ref_state_dict = hf_model.state_dict()
-    hf_model.load_state_dict({k: v for k, v in state_dict.items() if k in ref_state_dict})
+    lightning_module, datamodule = instantiate_model_and_datamodule(config)
+
+    assert isinstance(lightning_module, BaseLightningModule)
+
+    lightning_module.config.load_weights = False
+    lightning_module.config.init_weights = False
+    with init_empty_weights(include_buffers=False):
+        lightning_module.configure_model()
+    
+    incompatiable_keys = lightning_module.load_state_dict(checkpoint['state_dict'], strict=False, assign=True)
+    frozen_parameteres = {n for n, p in lightning_module.named_parameters() if not p.requires_grad}
+    assert len(set(incompatiable_keys.missing_keys) - frozen_parameteres) == 0, f"Missing keys: {incompatiable_keys.missing_keys}"
+    
+    model = lightning_module.get_model()
+    assert isinstance(model, HFCompatModel), f"{model.__class__} is not supported to be converted to HF version."
+    hf_model = model.get_hf_model()
     
     if hasattr(datamodule, 'config') and hasattr(datamodule.config, 'tokenizer'):
         tokenizer = datamodule.config.tokenizer
     else:
         tokenizer = model.load_hf_tokenizer()
     
-    if hasattr(datamodule, 'config') and hasattr(datamodule.config, 'chat_template'):
-        tokenizer.chat_template = datamodule.config.chat_template
+    if isinstance(datamodule, (InstructionTuningDataModule, PreferenceTuningDataModule)):
+        if datamodule.config.chat_template is not None:
+            tokenizer.chat_template = datamodule.config.chat_template
     
-    if hasattr(datamodule, 'config') and hasattr(datamodule.config, 'max_length'):
+    if isinstance(datamodule, (PreTrainingDataModule, InstructionTuningDataModule, PreferenceTuningDataModule)):
         tokenizer.model_max_length = max(tokenizer.model_max_length, datamodule.config.max_length)
     
     if eos_tokens is not None:
@@ -71,7 +74,7 @@ def main(
         tokenizer.eos_token = eos_tokens[0]
     
     print('Saving model')
-    hf_model.save_pretrained(output_dir)
+    hf_model.to(dtype).save_pretrained(output_dir)
     
     print('Saving tokenizer')
     tokenizer.save_pretrained(output_dir)
@@ -101,8 +104,7 @@ def convert_checkpoint(path: Path) -> dict[str, Any]:
 
 
 def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
-    from lightning.fabric.utilities.load import (_METADATA_FILENAME,
-                                                 _unflatten_dict)
+    from lightning.fabric.utilities.load import _METADATA_FILENAME
     from torch.distributed.checkpoint import FileSystemReader, load
     from torch.distributed.checkpoint.metadata import (BytesStorageMetadata,
                                                        TensorStorageMetadata)
@@ -131,9 +133,8 @@ def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
             raise NotImplementedError()
 
     load(state_dict=state_dict, storage_reader=reader)
-    key_map = {n: metadata.planner_data[n] for n in tensor_names}
-    state_dict = _unflatten_dict(state_dict, key_map=key_map)['model']
     
+    state_dict = {k.removeprefix('model.'): v for k, v in state_dict.items()}
     checkpoint = {'state_dict': state_dict}
     # This is the extra file saved by Fabric, with user data separate from weights and optimizer states
     extra_file = path / _METADATA_FILENAME
@@ -151,22 +152,12 @@ def instantiate_model_and_datamodule(config: dict[str, Any]) -> tuple[LightningM
     return classes['model'], classes['data']
 
 
-def construct_hf_model(
-    hf_model_class: type[_BaseAutoModelClass] | type[PreTrainedModel],
-    hf_config: PretrainedConfig
-) -> PreTrainedModel:
-    current_dtype = torch.get_default_dtype()
-    target_dtype = hf_config.torch_dtype
-    if isinstance(target_dtype, str):
-        target_dtype = getattr(torch, target_dtype, target_dtype)
-    torch.set_default_dtype(target_dtype)
-    with no_init_weights():
-        if issubclass(hf_model_class, _BaseAutoModelClass):
-            model = hf_model_class.from_config(hf_config)
-        else:
-            model = hf_model_class(hf_config)
-    torch.set_default_dtype(current_dtype)
-    return model
+def get_dtype_from_config(config: dict[str, Any]) -> torch.dtype:
+    dtype_mapping = {
+        '16-true': torch.half,
+        'bf16-true': torch.bfloat16
+    }
+    return dtype_mapping.get(config['trainer']['precision'], torch.float)
 
 
 if __name__ == '__main__':

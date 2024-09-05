@@ -11,7 +11,7 @@ trainer:
   logger:
     class_path: llm_training.overrides.wandb.WandbLogger
     init_args:
-      name: phi-3-mini-128k-instruct_pt_example
+      name: phi-3-mini-128k-instruct_it_example
       job_type: example
       project: llm-training
       save_dir: logs
@@ -25,42 +25,49 @@ trainer:
     - class_path: llm_training.overrides.ModelCheckpoint
       init_args:
         save_on_train_epoch_end: true
-        save_top_k: -1
-    - class_path: llm_training.overrides.ModelCheckpoint
-      init_args:
         save_top_k: 1
-        every_n_train_steps: 100
 
 model:
-  class_path: llm_training.models.hf_causal_lm.HFCausalLM
+  class_path: llm_training.lms.CLM
   init_args.config:
-    hf_path: microsoft/Phi-3-mini-128k-instruct
-    hf_model_kwargs:
-      torch_dtype: bfloat16
-      attn_implementation: flash_attention_2
-    enable_gradient_checkpointing: true
+    model:
+      model_class: llm_training.models.Phi3
+      model_config:
+        hf_path: microsoft/Phi-3-mini-128k-instruct
+        torch_dtype: bfloat16
+        attn_implementation: flash_attention_2
+        enable_gradient_checkpointing: true
     
+    # neftune_alpha: 5.0
+
     optim:
       optimizer_class: deepspeed.ops.adam.FusedAdam
       optimizer_kwargs:
-        lr: 1e-4
+        lr: 1e-5
       lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
       lr_scheduler_kwargs:
         num_warmup_steps: 100
-        min_lr: 1e-5
+        min_lr: 1e-6
 
 data:
-  class_path: llm_training.data.PreTrainingDataModule
+  class_path: llm_training.data.InstructionTuningDataModule
   init_args.config:
     dataset_kwargs:
-      path: Salesforce/wikitext
-      name: wikitext-2-v1
-      num_proc: 32
-    pre_processed_data_path: data/pre_processed/phi-3/wikitext-2-v1
+      path: ShinoharaHare/Infinity-Instruct-Reformatted
+      name: "0625"
+    pre_processed_data_path: null
     tokenizer:
       class_path: HFTokenizer
-      init_args.path: microsoft/Phi-3-mini-128k-instruct
+      init_args:
+        path: microsoft/Phi-3-mini-128k-instruct
     batch_size: 1
+    add_default_system_prompt_rate: 0.0
+    default_system_prompt: ""
+    chat_template: phi-3
+    concat_method: GROUP_BY_LENGTH
     max_length: 4096
-    num_proc: 32
+    pad_to_multiple_of: 64
+    validation_split: null
+    num_proc: 4
     num_workers: 4
+    enable_cache: true

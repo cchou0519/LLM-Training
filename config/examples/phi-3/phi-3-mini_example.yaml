@@ -36,13 +36,15 @@ trainer:
         every_n_train_steps: 1000
 
 model:
-  class_path: llm_training.models.hf_causal_lm.HFCausalLM
+  class_path: llm_training.lms.CLM
   init_args.config:
-    hf_path: microsoft/Phi-3-mini-128k-instruct
-    hf_model_kwargs:
-      torch_dtype: bfloat16
-      attn_implementation: flash_attention_2
-    enable_gradient_checkpointing: true
+    model:
+      model_class: llm_training.models.Phi3
+      model_config:
+        hf_path: microsoft/Phi-3-mini-128k-instruct
+        torch_dtype: bfloat16
+        attn_implementation: flash_attention_2
+        enable_gradient_checkpointing: true
     
     optim:
       optimizer_class: deepspeed.ops.adam.FusedAdam
@@ -50,7 +52,7 @@ model:
         lr: 1e-4
       lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
       lr_scheduler_kwargs:
-        num_warmup_steps: 2000
+        num_warmup_steps: 100
         min_lr: 1e-5
 
 data:

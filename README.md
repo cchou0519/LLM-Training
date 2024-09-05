@@ -27,7 +27,7 @@ To start a training, you will need to write your own config file first.
 
 A config file is a YAML file used to set up everything, including seeding, distributed strategy, hyper-parameters, model, data, and more.
 
-You can refer to the files under the [config](config/) directory to write your own config file.
+You can refer to the files under the [config](config/examples) directory to write your own config file.
 
 See [document](docs/config.md) for more information.
 
