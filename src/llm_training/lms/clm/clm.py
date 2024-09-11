@@ -73,7 +73,7 @@ class CLM(BaseLightningModule):
         self.model = get_model(self.config.model)
 
         if self.global_rank == 0:
-            logger.info(f'Config:\n{self.config}')
+            logger.info(f'Config:\n{repr(self.config)}')
             logger.info(f'Model:\n{self.model}')
 
         if self.config.neftune_alpha is not None:
@@ -91,7 +91,7 @@ class CLM(BaseLightningModule):
             reduction='mean'
         )
 
-    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:        
+    def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         labels = shift_labels(batch['labels'], self.config.ignore_index)
 
         if self.config.neftune_alpha is not None:

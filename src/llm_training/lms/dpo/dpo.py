@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import torch
@@ -11,6 +12,7 @@ from llm_training.ops.cross_entropy_op import shift_labels
 
 from .dpo_config import DPOConfig
 
+logger = logging.getLogger(__name__)
 
 class DPO(BaseLightningModule):
     config: DPOConfig
@@ -45,6 +47,11 @@ class DPO(BaseLightningModule):
         self.model = get_model(self.config.model)
         self.ref_model = get_model(self.config.ref_model or self.config.model)
         self.ref_model.eval().requires_grad_(False)
+
+        if self.global_rank == 0:
+            logger.info(f'Config:\n{repr(self.config)}')
+            logger.info(f'Model:\n{self.model}')
+            logger.info(f'Reference Model:\n{self.ref_model}')
 
     def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
         assert self.model.no_split_modules
