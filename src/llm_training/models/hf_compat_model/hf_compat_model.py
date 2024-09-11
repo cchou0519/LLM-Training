@@ -1,3 +1,6 @@
+from contextlib import contextmanager
+from typing import Generator
+
 import torch
 from accelerate import init_empty_weights
 from transformers import (AutoConfig, AutoModel, AutoTokenizer,
@@ -34,7 +37,6 @@ class HFCompatModel(BaseModel):
 
     def load_hf_config(self, **kwargs) -> PretrainedConfig:
         default_kwargs = {
-            'torch_dtype': self.config.torch_dtype,
             'trust_remote_code': self.config.trust_remote_code,
             'revision': self.config.revision,
             'attn_implementation': self.config.attn_implementation
@@ -61,20 +63,25 @@ class HFCompatModel(BaseModel):
         kwargs = default_kwargs | kwargs
         return AutoTokenizer.from_pretrained(path, **kwargs)
     
-    def construct_hf_model(self, **kwargs) -> PreTrainedModel:
-        if issubclass(self.hf_model_class, _BaseAutoModelClass):
-            default_kwargs = {}
-            default_kwargs['trust_remote_code'] = self.config.trust_remote_code
-            default_kwargs['attn_implementation'] = self.config.attn_implementation
-            default_kwargs['torch_dtype'] = (
-                self.hf_config.torch_dtype if self.config.torch_dtype == 'auto'
-                else self.config.torch_dtype
-            )
-            kwargs = default_kwargs | kwargs
-            return self.hf_model_class.from_config(self.hf_config, **kwargs)
-        
-        return self.hf_model_class(self.hf_config)
+    @contextmanager
+    def torch_dtype_context(self) -> Generator[None, None, None]:
+        original_dtype = torch.get_default_dtype()
+        torch_dtype = self.config.torch_dtype
+        torch_dtype = original_dtype if torch_dtype == 'auto' else torch_dtype
+        torch.set_default_dtype(torch_dtype)
+        yield
+        torch.set_default_dtype(original_dtype)
 
+    def construct_hf_model(self, **kwargs) -> PreTrainedModel:
+        with self.torch_dtype_context():
+            if issubclass(self.hf_model_class, _BaseAutoModelClass):
+                default_kwargs = {}
+                default_kwargs['trust_remote_code'] = self.config.trust_remote_code
+                default_kwargs['attn_implementation'] = self.config.attn_implementation
+                kwargs = default_kwargs | kwargs
+                return self.hf_model_class.from_config(self.hf_config, **kwargs)
+            return self.hf_model_class(self.hf_config)
+    
     def convert_state_dict_from_hf(self, hf_state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return hf_state_dict
 
@@ -93,14 +100,8 @@ class HFCompatModel(BaseModel):
         return super().get_pre_trained_weights()
 
     def get_hf_model(self) -> PreTrainedModel:
-        t = torch.get_default_dtype()
-        torch_dtype = self.config.torch_dtype
-        torch_dtype = t if torch_dtype == 'auto' else torch_dtype
-        torch.set_default_dtype(torch_dtype)
         with init_empty_weights(include_buffers=False):
             hf_model = self.construct_hf_model()
-        torch.set_default_dtype(t)
-
         state_dict = self.convert_state_dict_to_hf(self.state_dict())
         hf_model.load_state_dict(state_dict, assign=True)
         return hf_model

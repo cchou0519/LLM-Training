@@ -54,6 +54,7 @@ def main(
     
     model = lightning_module.get_model()
     assert isinstance(model, HFCompatModel), f"{model.__class__} is not supported to be converted to HF version."
+    model.config.torch_dtype = dtype
     hf_model = model.get_hf_model()
     
     if hasattr(datamodule, 'config') and hasattr(datamodule.config, 'tokenizer'):
