@@ -28,7 +28,7 @@ class RoPEConfig(BaseModel):
             logger.warning(
                 f"Missing validation function mapping in `ROPE_VALIDATION_FUNCTIONS` for 'rope_type'='{self.type}'"
             )
-
+        return self
 
 def _compute_default_rope_parameters(
     config: RoPEConfig,
