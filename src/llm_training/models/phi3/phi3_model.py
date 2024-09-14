@@ -99,8 +99,8 @@ class Phi3(HFCompatModel):
                 hidden_states,
                 position_embeddings,
                 attention_mask,
-                # use_reentrant=False
-                use_reentrant=True
+                use_reentrant=False # avoid multiple gradient reduction issue
+                # use_reentrant=True
             )
         return layer(
             hidden_states,
