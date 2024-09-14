@@ -55,7 +55,7 @@ data:
   class_path: llm_training.data.PreferenceTuningDataModule
   init_args.config:
     dataset_kwargs:
-      path: trl-internal-testing/hh-rlhf-helpful-base-trl-style
+      path: trl-internal-testing/Anthropic-hh-rlhf-processed
     tokenizer:
       class_path: HFTokenizer
       init_args:
