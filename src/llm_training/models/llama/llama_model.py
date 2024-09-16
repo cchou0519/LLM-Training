@@ -99,8 +99,7 @@ class Llama(HFCompatModel):
                 hidden_states,
                 position_embeddings,
                 attention_mask,
-                # use_reentrant=False
-                use_reentrant=True
+                use_reentrant=False
             )
         return layer(
             hidden_states,
