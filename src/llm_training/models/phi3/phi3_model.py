@@ -42,6 +42,12 @@ class Phi3(HFCompatModel):
         self.norm = Phi3RMSNorm(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+        self._hf_model = (self.get_hf_model(),)
+
+    @property
+    def hf_model(self) -> Phi3ForCausalLM:
+        return self._hf_model[0]
+
     def merge_hf_config(self, hf_config: HFPhi3Config) -> None:
         assert hf_config.hidden_act == 'silu'
         assert not hf_config.tie_word_embeddings
@@ -110,7 +116,7 @@ class Phi3(HFCompatModel):
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed_tokens
     
-    def get_outut_embeddings(self) -> nn.Linear:
+    def get_output_embeddings(self) -> nn.Linear:
         return self.lm_head
 
     def forward(
@@ -187,6 +193,18 @@ class Phi3(HFCompatModel):
     
     @copy_method_signature(forward)
     def __call__(): ...
+
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        **kwargs
+    ) -> torch.Tensor:
+        return self.hf_model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **kwargs
+        )
 
 
 class Phi3RMSNorm(nn.Module):

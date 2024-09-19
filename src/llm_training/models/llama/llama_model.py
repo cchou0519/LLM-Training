@@ -110,7 +110,7 @@ class Llama(HFCompatModel):
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed_tokens
     
-    def get_outut_embeddings(self) -> nn.Linear:
+    def get_output_embeddings(self) -> nn.Linear:
         return self.lm_head
 
     def forward(
