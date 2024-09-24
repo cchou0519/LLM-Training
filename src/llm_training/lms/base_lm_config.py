@@ -23,6 +23,7 @@ class BaseLightningModuleConfig(PyDanticBaseModel):
     init_weights: bool = False
     load_weights: bool = True
     optim: BaseOptimizerConfig | None = None
+    frozen_modules: list[str] | None = None
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
