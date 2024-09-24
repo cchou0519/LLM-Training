@@ -49,7 +49,8 @@ class HFCompatModel(BaseModel):
             'low_cpu_mem_usage': self.config.low_cpu_mem_usage,
             'torch_dtype': self.config.torch_dtype,
             'trust_remote_code': self.config.trust_remote_code,
-            'revision': self.config.revision
+            'revision': self.config.revision,
+            'attn_implementation': self.config.attn_implementation
         }
         kwargs = default_kwargs | kwargs
         return self.hf_model_class.from_pretrained(self.config.hf_path, **kwargs)
@@ -105,4 +106,3 @@ class HFCompatModel(BaseModel):
         state_dict = self.convert_state_dict_to_hf(self.state_dict())
         hf_model.load_state_dict(state_dict, assign=True)
         return hf_model
-        
