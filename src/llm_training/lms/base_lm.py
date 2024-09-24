@@ -1,6 +1,7 @@
 import gc
 import inspect
 import logging
+import re
 from contextlib import contextmanager
 from functools import wraps
 from typing import Callable, ContextManager, Iterable, ParamSpec, TypeVar
@@ -246,6 +247,15 @@ class BaseLightningModule(LightningModule):
         raise NotImplementedError()
 
     def on_after_configure_model(self) -> None:
+        if self.config.frozen_modules is not None:
+            for n, m in self.named_modules():
+                for fm in self.config.frozen_modules:
+                    if re.search(rf'{fm}', n) is not None:
+                        if self.global_rank == 0:
+                            logger.info(f'Freeze `{n}`')
+                        m.eval().requires_grad_(False)
+                        break
+
         if self.should_load_pre_trained_weights:
             self.load_pre_trained_weights()
 
@@ -307,3 +317,16 @@ class BaseLightningModule(LightningModule):
 
     def get_model(self) -> BaseModel:
         raise NotImplementedError()
+
+    @property
+    def required_keys(self) -> set[str]:
+        model = self.get_model()
+        for n, m in self.named_children():
+            if m is model:
+                prefix = n + '.'
+                break
+        else:
+            raise Exception("Failed to infer prefix")
+
+        state_dict = model.state_dict(prefix=prefix)
+        return set(state_dict.keys())

@@ -59,7 +59,7 @@ class DeepSpeedStrategy(_DeepSpeedStrategy):
         load_full_weights: bool = False,
         precision_plugin: Precision | None = None,
         process_group_backend: str | None = None,
-        exclude_frozen_parameters: bool = False,
+        exclude_frozen_parameters: bool = True,
         raise_error_at_min_scale: bool | None = None,
         zero3_leaf_modules: list[type] | None = None,
         stage3_max_live_parameters: int | float = 1e9,
