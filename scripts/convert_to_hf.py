@@ -18,7 +18,7 @@ def main(
     checkpoint_path: str | Path,
     output_dir: str | Path | None = None,
     config_path: str | None = None,
-    eos_tokens: list[str] | None = None,
+    eos_token_id: int | list[int] | None = None,
     dtype: torch.dtype | None = None
 ) -> None:
     checkpoint_path = Path(checkpoint_path)
@@ -48,37 +48,38 @@ def main(
     with init_empty_weights(include_buffers=False):
         lightning_module.configure_model()
     
-    incompatiable_keys = lightning_module.load_state_dict(checkpoint['state_dict'], strict=False, assign=True)
-    frozen_parameteres = {n for n, p in lightning_module.named_parameters() if not p.requires_grad}
-    assert len(set(incompatiable_keys.missing_keys) - frozen_parameteres) == 0, f"Missing keys: {incompatiable_keys.missing_keys}"
+    state_dict = checkpoint['state_dict']
+    required_keys = lightning_module.required_keys
+    missing_keys = required_keys - state_dict.keys()
+    if len(missing_keys) > 0:
+        original_state_dict = lightning_module.get_pre_trained_weights()
+        state_dict |= {k: original_state_dict[k] for k in missing_keys}
+
+    incompatiable_keys = lightning_module.load_state_dict(state_dict, strict=False, assign=True)
+    missing_keys = set(incompatiable_keys.missing_keys)
+    required_missing_keys = missing_keys & required_keys
+    assert len(missing_keys & required_keys) == 0, f"Missing keys: {required_missing_keys}"
     
     model = lightning_module.get_model()
     assert isinstance(model, HFCompatModel), f"{model.__class__} is not supported to be converted to HF version."
     model.config.torch_dtype = dtype
     hf_model = model.get_hf_model()
     
-    if hasattr(datamodule, 'config') and hasattr(datamodule.config, 'tokenizer'):
-        tokenizer = datamodule.config.tokenizer
-    else:
-        tokenizer = model.load_hf_tokenizer()
-    
-    if isinstance(datamodule, (InstructionTuningDataModule, PreferenceTuningDataModule)):
-        if datamodule.config.chat_template is not None:
-            tokenizer.chat_template = datamodule.config.chat_template
-    
-    if isinstance(datamodule, (PreTrainingDataModule, InstructionTuningDataModule, PreferenceTuningDataModule)):
-        tokenizer.model_max_length = max(tokenizer.model_max_length, datamodule.config.max_length)
-    
-    if eos_tokens is not None:
-        vocab = tokenizer.get_vocab()
-        hf_model.generation_config.eos_token_id = [vocab[e] for e in eos_tokens]
-        tokenizer.eos_token = eos_tokens[0]
+    if eos_token_id is not None:
+        hf_model.config.eos_token_id = eos_token_id
+        hf_model.generation_config.eos_token_id = eos_token_id
     
     print('Saving model')
     hf_model.to(dtype).save_pretrained(output_dir)
     
-    print('Saving tokenizer')
-    tokenizer.save_pretrained(output_dir)
+    if isinstance(datamodule, (PreTrainingDataModule, InstructionTuningDataModule, PreferenceTuningDataModule)):
+        print('Saving tokenizer')
+        tokenizer = datamodule.config.tokenizer
+        tokenizer.model_max_length = max(tokenizer.model_max_length, datamodule.config.max_length)
+        chat_template = getattr(datamodule.config, 'chat_template', None)
+        if chat_template is not None:
+            tokenizer.chat_template = chat_template
+        tokenizer.save_pretrained(output_dir)
 
 
 def convert_checkpoint(path: Path) -> dict[str, Any]:

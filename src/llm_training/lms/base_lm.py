@@ -317,3 +317,16 @@ class BaseLightningModule(LightningModule):
 
     def get_model(self) -> BaseModel:
         raise NotImplementedError()
+
+    @property
+    def required_keys(self) -> set[str]:
+        model = self.get_model()
+        for n, m in self.named_children():
+            if m is model:
+                prefix = n + '.'
+                break
+        else:
+            raise Exception("Failed to infer prefix")
+
+        state_dict = model.state_dict(prefix=prefix)
+        return set(state_dict.keys())
