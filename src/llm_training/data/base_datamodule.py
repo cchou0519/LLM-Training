@@ -1,6 +1,7 @@
 import logging
+import os
 from functools import partial
-from typing import Mapping
+from typing import Mapping, TextIO
 
 import lightning as L
 from torch.utils.data import DataLoader, Dataset
@@ -26,9 +27,7 @@ class BaseDataModule(L.LightningDataModule):
         self.raw_dataset_dict = None
         self.pre_processed_dataset_dict = None
         self.dataset_dict = None
-        
-        self.train_dataloader_state = {}
-
+    
     def load_data(self) -> DatasetDict:
         raise NotImplementedError()
 
@@ -52,6 +51,22 @@ class BaseDataModule(L.LightningDataModule):
     
     def load_pre_processed_data(self, path: str | None = None) -> None:
         raise NotImplementedError()
+
+    def print_dataset_info(self, file: TextIO | None = None) -> None:
+        print_ = partial(print, file=file)
+        def print_header(header: str) -> None:
+            n = os.get_terminal_size().columns
+            m = (n - len(header) - 2) // 2
+            divider = '=' * m
+            header = f'{divider} {header} {divider}'
+            print_(f'{header:^{n}}', end='\n\n')
+        
+        print_header('Raw Dataset')
+        print_(self.raw_dataset_dict, end='\n\n')
+        print_header('Pre-processed Dataset')
+        print_(self.pre_processed_dataset_dict, end='\n\n')
+        print_header('Final Dataset')
+        print_(self.dataset_dict, end='\n\n')
 
     def _get_dataloader(self, split: str):
         dataloader_class = DataLoader
