@@ -21,16 +21,16 @@ class InstructionTuningDataModule(HFBasedDataModule):
         dataset_dict = self.map_dataset_dict(
             dataset_dict,
             _apply_chat_template_and_tokenize,
-            input_columns='messages',
-            remove_columns=True,
             fn_kwargs=dict(
                 tokenizer=self.config.tokenizer,
                 chat_template=self.config.chat_template,
                 add_default_system_prompt_rate=self.config.add_default_system_prompt_rate,
                 default_system_prompt=self.config.default_system_prompt
             ),
+            batched=True,
+            remove_columns=True,
             num_proc=self.config.num_proc,
-            desc='Apply template and tokenize'
+            desc='Apply chat template and tokenize'
         )
 
         if self.config.overlong_handling_method == OverlongHandlingMethod.DROP:
@@ -67,60 +67,48 @@ class InstructionTuningDataModule(HFBasedDataModule):
 
 
 def _apply_chat_template_and_tokenize(
-    messages: list[dict[str, str]],
+    batch: dict[str, list[str]],
     tokenizer: PreTrainedTokenizerBase,
     chat_template: str | None,
     default_system_prompt: str | None,
     add_default_system_prompt_rate: float | None 
 ):
-    input_ids = []
-    labels = []
-
-    # Add an empty system prompt randomly if it does not exist.
-    has_system_prompt = any(m['role'] == 'system' for m in messages)
-    if (
-        not has_system_prompt
-        and default_system_prompt is not None
-        and add_default_system_prompt_rate is not None
-        and random.random() < add_default_system_prompt_rate
-    ):
-        messages.insert(0, {'role': 'system', 'content': default_system_prompt})
-
-    system_prompt = None
-    if messages[0]['role'] == 'system':
-        system_prompt = messages.pop(0)
-
-    for i, message in enumerate(messages):
-        conversation = [message]
-        if i == 0 and system_prompt is not None:
-            conversation.insert(0, system_prompt)
-        text = tokenizer.apply_chat_template(
-            conversation,
-            chat_template=chat_template,
-            tokenize=False,
-            add_generation_prompt=message['role'] == 'user',
-            index=i,
-            length=len(messages)
-        )
-        # 這裡將同一筆資料分多次 tokenize，為保證跟一次 tokenize 全部的結果相同
-        # 先在前面加一個 token，encode 後再移除掉
-        text = tokenizer.bos_token + text
-        current_input_ids = tokenizer.encode(text, add_special_tokens=False)
-        current_input_ids = current_input_ids[1:]
-        
-        if message['role'] in ['system', 'user']:
-            input_ids += current_input_ids
-            labels += [-100] * len(current_input_ids)
-        elif message['role'] == 'assistant':
-            input_ids += current_input_ids
-            labels += current_input_ids
-        else:
-            raise ValueError(f"Unknown role: `{message['role']}`")
-
-    return {
-        'input_ids': input_ids,
-        'labels': labels
+    new_batch = {
+        'input_ids': [],
+        'labels': []
     }
+
+    for messages in batch['messages']:
+        # Add an empty system prompt randomly if it does not exist.
+        has_system_prompt = any(m['role'] == 'system' for m in messages)
+        if (
+            not has_system_prompt
+            and default_system_prompt is not None
+            and add_default_system_prompt_rate is not None
+            and random.random() < add_default_system_prompt_rate
+        ):
+            messages.insert(0, {'role': 'system', 'content': default_system_prompt})
+
+    batch_encoding = tokenizer.apply_chat_template(
+        batch['messages'],
+        chat_template=chat_template,
+        return_dict=True,
+        return_assistant_tokens_mask=True,
+        tokenizer_kwargs=dict(
+            return_attention_mask=False,
+            verbose=False
+        )
+    )
+    
+    for input_ids, assistant_masks in zip(
+        batch_encoding['input_ids'],
+        batch_encoding['assistant_masks']
+    ):
+        labels = [i if a == 1 else -100 for i, a in zip(input_ids, assistant_masks)]
+        new_batch['input_ids'].append(input_ids)
+        new_batch['labels'].append(labels)
+
+    return new_batch
 
 
 def _drop_overlong(input_ids: list[int], max_length: int):

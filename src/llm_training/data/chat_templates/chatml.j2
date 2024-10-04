@@ -1,11 +1,14 @@
-{% set is_splitted = index is defined and length is defined %}
-{% for message in messages %}
-    {% set content = message['content'] + '<|im_end|>\n' %}
-    {% if message['role'] != 'assistant' or not is_splitted %}
-        {% set content = '<|im_start|>' + message['role'] + '\n' + content %}
-    {% endif %}
-    {{- content -}}
-{% endfor %}
-{% if add_generation_prompt %}
-    {{- '<|im_start|>assistant\n' -}}
-{% endif %}
+{%- for message in messages %}
+    {{- '<|im_start|>' + message.role + '\n' }}
+    {%- set content = message.content + '<|im_end|>\n' %}
+    {%- if message.role == 'assistant' %}
+        {% generation %}
+            {{- content -}}
+        {% endgeneration %}
+    {%- else %}
+        {{- content }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+{%- endif %}
