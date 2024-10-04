@@ -44,6 +44,9 @@ class Llama(HFCompatModel):
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+        if self.config.tie_word_embeddings:
+            self.lm_head.weight = self.embed_tokens.weight
+
     def _init_weights_impl(self, module: nn.Module):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
@@ -57,8 +60,8 @@ class Llama(HFCompatModel):
 
     def merge_hf_config(self, hf_config: HFLlamaConfig) -> None:
         assert hf_config.hidden_act == 'silu'
-        assert not hf_config.tie_word_embeddings
 
+        self.config.tie_word_embeddings = hf_config.tie_word_embeddings
         self.config.vocab_size = hf_config.vocab_size
         self.config.hidden_size = hf_config.hidden_size
         self.config.intermediate_size = hf_config.intermediate_size
