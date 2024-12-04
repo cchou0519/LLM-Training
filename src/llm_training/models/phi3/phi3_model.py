@@ -9,6 +9,7 @@ from transformers import Phi3Config as HFPhi3Config
 from transformers import Phi3ForCausalLM
 
 from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.models.utils.modeling_outputs import CausalLMOutput
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
 from llm_training.ops.liger_kernel import *
@@ -110,16 +111,23 @@ class Phi3(HFCompatModel):
     def get_input_embeddings(self) -> nn.Embedding:
         return self.embed_tokens
     
-    def get_outut_embeddings(self) -> nn.Linear:
+    def get_output_embeddings(self) -> nn.Linear:
         return self.lm_head
+
+    def set_input_embeddings(self, embedding: nn.Embedding) -> None:
+        self.embed_tokens = embedding
+
+    def set_output_embeddings(self, linear: nn.Linear) -> None:
+        self.lm_head = linear
 
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None
-    ) -> torch.Tensor:
+        inputs_embeds: torch.Tensor | None = None,
+        return_last_hidden_states: bool = False
+    ) -> CausalLMOutput:
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -178,12 +186,17 @@ class Phi3(HFCompatModel):
                 position_embeddings=position_embeddings,
                 attention_mask=attention_mask,
             )
+        
+        last_hidden_states = hidden_states if return_last_hidden_states else None
         hidden_states = self.norm(hidden_states)
 
         logits = self.lm_head(hidden_states)
         logits = logits.float()
 
-        return logits
+        return CausalLMOutput(
+            logits=logits,
+            last_hidden_states=last_hidden_states
+        )
     
     @copy_method_signature(forward)
     def __call__(): ...
