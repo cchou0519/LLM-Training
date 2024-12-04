@@ -32,14 +32,14 @@ class PreferenceTuningDataCollator(BaseDataCollator):
         
         return new_batch
 
-    def __call__(self, batch: list[dict[str, Any]]):
+    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         outputs = {
             'chosen_input_ids': [],
             'chosen_attention_mask': [],
             'chosen_labels': [],
             'rejected_input_ids': [],
             'rejected_attention_mask': [],
-            'rejected_labels': [],
+            'rejected_labels': []
         }
         
         for x in batch:
@@ -58,9 +58,11 @@ class PreferenceTuningDataCollator(BaseDataCollator):
         outputs['rejected_labels'] = self._pad_to_longest(outputs['rejected_labels'], -100)
 
         outputs['chosen_input_ids'] = torch.tensor(outputs['chosen_input_ids'])
+        outputs['chosen_position_ids'] = torch.arange(outputs['chosen_input_ids'].size(1)).unsqueeze(0)
         outputs['chosen_attention_mask'] = torch.tensor(outputs['chosen_attention_mask'])
         outputs['chosen_labels'] = torch.tensor(outputs['chosen_labels'])
         outputs['rejected_input_ids'] = torch.tensor(outputs['rejected_input_ids'])
+        outputs['rejected_position_ids'] = torch.arange(outputs['rejected_input_ids'].size(1)).unsqueeze(0)
         outputs['rejected_attention_mask'] = torch.tensor(outputs['rejected_attention_mask'])
         outputs['rejected_labels'] = torch.tensor(outputs['rejected_labels'])
 

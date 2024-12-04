@@ -18,7 +18,7 @@ class PreTrainingDataCollator(BaseDataCollator):
 
         assert 'pad_token' in config.tokenizer.special_tokens_map, '`pad_token` is not specified. Please set it manually.'
     
-    def _pad_to_longest(self, x: list[list[int]]):
+    def _pad_to_longest(self, x: list[list[int]]) -> list[list[int]]:
         n = max(len(y) for y in x)
         if self.config.pad_to_multiple_of is not None:
             n = ((n // self.config.pad_to_multiple_of) + 1) * self.config.pad_to_multiple_of
@@ -29,7 +29,7 @@ class PreTrainingDataCollator(BaseDataCollator):
             y[:] = paddings + y if self.tokenizer.padding_side == 'left' else y + paddings
         return x
 
-    def __call__(self, batch: list[dict[str, Any]]):
+    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         input_ids = [x['input_ids'] for x in batch]
         
         input_ids = self._pad_to_longest(input_ids)
@@ -41,5 +41,6 @@ class PreTrainingDataCollator(BaseDataCollator):
         return {
             'input_ids': input_ids,
             'attention_mask': torch.ones_like(input_ids).masked_fill(padding_mask, 0),
+            'position_ids': torch.arange(input_ids.size(1)).unsqueeze(0),
             'labels': input_ids.masked_fill(bos_mask | padding_mask, -100)
         }

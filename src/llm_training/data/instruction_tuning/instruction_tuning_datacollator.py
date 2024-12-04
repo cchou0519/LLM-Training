@@ -40,7 +40,7 @@ class InstructionTuningDataCollator(BaseDataCollator):
         
         return new_batch
 
-    def __call__(self, batch: list[dict[str, Any]]):
+    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         batch_input_ids = []
         batch_attention_mask = []
         batch_position_ids = []
