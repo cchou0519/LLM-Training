@@ -10,6 +10,7 @@ from lightning import LightningDataModule, LightningModule
 from lightning.pytorch.cli import LightningArgumentParser
 
 from llm_training.data import *
+from llm_training.lightning.cli import *
 from llm_training.lms import BaseLightningModule
 from llm_training.models import HFCompatModel
 
@@ -49,13 +50,17 @@ def main(
         lightning_module.configure_model()
     
     state_dict = checkpoint['state_dict']
+
     required_keys = lightning_module.required_keys
     missing_keys = required_keys - state_dict.keys()
+    
     if len(missing_keys) > 0:
+        print(f'There are {len(missing_keys)} keys missing from the checkpoint, trying to take from pre-trained weights.')
         original_state_dict = lightning_module.get_pre_trained_weights()
         state_dict |= {k: original_state_dict[k] for k in missing_keys}
 
     incompatiable_keys = lightning_module.load_state_dict(state_dict, strict=False, assign=True)
+
     missing_keys = set(incompatiable_keys.missing_keys)
     required_missing_keys = missing_keys & required_keys
     assert len(missing_keys & required_keys) == 0, f"Missing keys: {required_missing_keys}"
@@ -72,9 +77,19 @@ def main(
     print('Saving model')
     hf_model.to(dtype).save_pretrained(output_dir)
     
-    if isinstance(datamodule, (PreTrainingDataModule, InstructionTuningDataModule, PreferenceTuningDataModule)):
-        print('Saving tokenizer')
+    tokenizer = None
+    if isinstance(
+        datamodule,
+        (
+            PreTrainingDataModule,
+            InstructionTuningDataModule,
+            PreferenceTuningDataModule
+        )
+    ):
         tokenizer = datamodule.config.tokenizer
+
+    if tokenizer is not None:
+        print('Saving tokenizer')
         tokenizer.model_max_length = max(tokenizer.model_max_length, datamodule.config.max_length)
         chat_template = getattr(datamodule.config, 'chat_template', None)
         if chat_template is not None:
@@ -114,7 +129,7 @@ def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
     reader = FileSystemReader(path)
     metadata = reader.read_metadata()
 
-    tensor_names = [n for n in metadata.state_dict_metadata.keys() if n.startswith('model.')]
+    tensor_names = [n for n in metadata.state_dict_metadata.keys() if n.startswith('state_dict.')]
     state_dict = {}
     for tensor_name in tensor_names:
         sd_metadata = metadata.state_dict_metadata[tensor_name]
@@ -136,7 +151,7 @@ def convert_fsdp_checkpoint(path: Path) -> dict[str, Any]:
 
     load(state_dict=state_dict, storage_reader=reader)
     
-    state_dict = {k.removeprefix('model.'): v for k, v in state_dict.items()}
+    state_dict = {k.removeprefix('state_dict.'): v for k, v in state_dict.items()}
     checkpoint = {'state_dict': state_dict}
     # This is the extra file saved by Fabric, with user data separate from weights and optimizer states
     extra_file = path / _METADATA_FILENAME
