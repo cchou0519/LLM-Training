@@ -60,6 +60,7 @@ data:
       class_path: HFTokenizer
       init_args:
         path: microsoft/Phi-3-mini-128k-instruct
+    chat_template: phi-3
     batch_size: 1
     max_length: 4096
     pad_to_multiple_of: 64

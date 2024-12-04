@@ -16,7 +16,7 @@ class LlamaConfig(HFCompatModelConfig):
     initializer_range: float = 0.02
     rms_norm_eps: float = 1e-6
     pad_token_id: int | None = None
-    # tie_word_embeddings: bool = False
+    tie_word_embeddings: bool = False
     rope_theta: float = 10000.0
     attention_bias: bool = False
     attention_dropout: float = 0.0

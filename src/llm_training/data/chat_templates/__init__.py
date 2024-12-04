@@ -5,7 +5,8 @@ logger = logging.getLogger(__name__)
 
 class _ChatTemplates:
     def _get_path_by_name(self, name: str) -> Path:
-        return Path(__file__).parent.joinpath(name).with_suffix('.j2')
+        p = Path(__file__).parent / name
+        return p.with_suffix(f'{p.suffix}.j2')
     
     def __getitem__(self, name: str) -> str:
         if name not in self:

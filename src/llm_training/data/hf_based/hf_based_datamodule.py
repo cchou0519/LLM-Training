@@ -41,10 +41,14 @@ class HFBasedDataModule(BaseDataModule):
         
         dataset_dict = load_dataset(**dataset_kwargs)
 
-        if (split := dataset_kwargs.get('split', False)):
-            dataset_dict = DatasetDict({split: dataset_dict})
+        if isinstance(dataset_dict, Dataset):
+            dataset_dict = DatasetDict({'train': dataset_dict})
 
         assert self.config.validation_split is None or 'train' in dataset_dict and 'validation' not in dataset_dict
+
+        if self.config.cleanup_cache_files:
+            n = dataset_dict.cleanup_cache_files()
+            logger.info(f'Cleanup cache files: {n}')
 
         return dataset_dict
     
@@ -58,8 +62,6 @@ class HFBasedDataModule(BaseDataModule):
         if self.config.pre_processed_data_path is None:
             with cache_context(self.config.enable_cache):
                 dataset_dict = self.load_data()
-                if self.config.cleanup_cache_files:
-                    dataset_dict.cleanup_cache_files()
                 self.pre_process_data(dataset_dict)
     
     def setup(self, stage: str | None = None) -> None:

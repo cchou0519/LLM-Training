@@ -1,5 +1,3 @@
-from typing import Any
-
 from transformers import PreTrainedTokenizerBase
 
 from llm_training.data.hf_based.hf_based_datamodule import (DatasetDict,
@@ -21,11 +19,12 @@ class PreferenceTuningDataModule(HFBasedDataModule):
         dataset_dict = self.map_dataset_dict(
             dataset_dict,
             _apply_chat_template_and_tokenize,
-            remove_columns=True,
             fn_kwargs=dict(
                 tokenizer=self.config.tokenizer,
                 chat_template=self.config.chat_template
             ),
+            batched=True,
+            remove_columns=True,
             num_proc=self.config.num_proc,
             desc='Apply chat template and tokenize'
         )
@@ -51,79 +50,70 @@ class PreferenceTuningDataModule(HFBasedDataModule):
         return dataset_dict
 
 
-def _apply_chat_template_and_tokenize_single(
-    messages: list[dict[str, str]],
-    tokenizer: PreTrainedTokenizerBase,
-    chat_template: str | None
-) -> tuple[list[int], list[int]]:
-    input_ids = []
-    labels = []
-
-    system_prompt = None
-    if messages[0]['role'] == 'system':
-        system_prompt = messages.pop(0)
-
-    for i, message in enumerate(messages):
-        conversation = [message]
-        if i == 0 and system_prompt is not None:
-            conversation.insert(0, system_prompt)
-        text = tokenizer.apply_chat_template(
-            conversation,
-            chat_template=chat_template,
-            tokenize=False,
-            add_generation_prompt=message['role'] == 'user',
-            index=i,
-            length=len(messages)
-        )
-        # 這裡將同一筆資料分多次 tokenize，為保證跟一次 tokenize 全部的結果相同
-        # 先在前面加一個 token，encode 後再移除掉
-        text = tokenizer.bos_token + text
-        current_input_ids = tokenizer.encode(text, add_special_tokens=False)
-        current_input_ids = current_input_ids[1:]
-        
-        if message['role'] in ['system', 'user']:
-            input_ids += current_input_ids
-            labels += [-100] * len(current_input_ids)
-        elif message['role'] == 'assistant':
-            input_ids += current_input_ids
-            labels += current_input_ids
-        else:
-            raise ValueError(f"Unknown role: `{message['role']}`")
-
-    return input_ids, labels
-
-
 def _apply_chat_template_and_tokenize(
-    example: dict[str, Any],
+    batch: dict[str, list[str]],
     tokenizer: PreTrainedTokenizerBase,
     chat_template: str | None
 ):
-    chosen_input_ids, chosen_labels = _apply_chat_template_and_tokenize_single(
-        [
-            {'role': 'user', 'content': example['prompt']},
-            {'role': 'assistant', 'content': example['chosen']}
-        ],
-        tokenizer=tokenizer,
-        chat_template=chat_template
-    )
-
-    rejected_input_ids, rejected_labels = _apply_chat_template_and_tokenize_single(
-        [
-            {'role': 'user', 'content': example['prompt']},
-            {'role': 'assistant', 'content': example['rejected']}
-        ],
-        tokenizer=tokenizer,
-        chat_template=chat_template
-    )
-
-    return {
-        'chosen_input_ids': chosen_input_ids,
-        'chosen_labels': chosen_labels,
-        'chosen_length': len(chosen_input_ids),
-        'rejected_input_ids': rejected_input_ids,
-        'rejected_labels': rejected_labels,
-        'rejected_length': len(rejected_input_ids),
+    new_batch = {
+        'chosen_input_ids': [],
+        'chosen_labels': [],
+        'chosen_length': [],
+        'rejected_input_ids': [],
+        'rejected_labels': [],
+        'rejected_length': []
     }
+
+    chosen_messages = []
+    rejected_messages = []
+    for prompt, chosen, rejected in zip(
+        batch['prompt'],
+        batch['chosen'],
+        batch['rejected']
+    ):
+        chosen_messages.append([
+            {'role': 'user', 'content': prompt},
+            {'role': 'assistant', 'content': chosen}
+        ])
+
+        rejected_messages.append([
+            {'role': 'user', 'content': prompt},
+            {'role': 'assistant', 'content': rejected}
+        ])
+
+    kwargs = dict(
+        chat_template=chat_template,
+        return_dict=True,
+        return_assistant_tokens_mask=True,
+        tokenizer_kwargs=dict(
+            return_attention_mask=False,
+            verbose=False
+        )
+    )
+
+    chosen_batch_encoding = tokenizer.apply_chat_template(chosen_messages, **kwargs)
+    for input_ids, assistant_masks in zip(
+        chosen_batch_encoding['input_ids'],
+        chosen_batch_encoding['assistant_masks']
+    ):
+        labels = [i if a == 1 else -100 for i, a in zip(input_ids, assistant_masks)]
+        i = input_ids.index(32001)
+        assert assistant_masks[i] == 0
+        new_batch['chosen_input_ids'].append(input_ids)
+        new_batch['chosen_labels'].append(labels)
+        new_batch['chosen_length'].append(len(input_ids))
+
+    rejected_batch_encoding = tokenizer.apply_chat_template(rejected_messages, **kwargs)
+    for input_ids, assistant_masks in zip(
+        rejected_batch_encoding['input_ids'],
+        rejected_batch_encoding['assistant_masks']
+    ):
+        labels = [i if a == 1 else -100 for i, a in zip(input_ids, assistant_masks)]
+        new_batch['rejected_input_ids'].append(input_ids)
+        new_batch['rejected_labels'].append(labels)
+        new_batch['rejected_length'].append(len(input_ids))
+
+    return new_batch
 
 
 def _drop_overlong(chosen_length: int, rejected_length: int, max_length: int):

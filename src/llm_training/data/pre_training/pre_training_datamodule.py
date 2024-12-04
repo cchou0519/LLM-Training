@@ -3,14 +3,17 @@ import math
 import os
 import pickle
 import random
+from collections import Counter
+from functools import partial
 from typing import Any, Iterable
 
 from datasets import Dataset
+from tabulate import tabulate
 from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from llm_training.data.hf_based.hf_based_datamodule import (DatasetDict,
-                                                        HFBasedDataModule)
+                                                            HFBasedDataModule)
 
 from .pre_training_datacollator import PreTrainingDataCollator
 from .pre_training_datamodule_config import (ConcatMethod,
@@ -158,6 +161,46 @@ class PreTrainingDataModule(HFBasedDataModule):
         dataset_dict = self.sample_data(dataset_dict, source_indices)
         return dataset_dict
 
+    def print_dataset_info(self, file: str | None) -> None:
+        super().print_dataset_info(file)
+
+        print_ = partial(print, file=file)
+        
+        def get_tokens_table(dataset_dict: DatasetDict) -> str:
+            tokens: dict[str, Counter[str, int]] = {}
+            for k, dataset in dataset_dict.items():
+                counter = Counter()
+                dataset = dataset.select_columns(['source', 'length'])
+                with tqdm(
+                    total=len(dataset),
+                    desc=f'Count tokens ({k})',
+                    leave=False
+                ) as progress:
+                    for batch in dataset.iter(1000):
+                        batch_size = len(batch['length'])
+                        for source, length in zip(batch['source'], batch['length']):
+                            counter[source] += length
+                            counter['*'] += length
+                        tokens[k] = counter
+                        progress.set_postfix(tokens=counter['*'])
+                        progress.update(batch_size)
+            
+            return tabulate(
+                [
+                    [split, source, tokens] 
+                    for split, counter in tokens.items()
+                    for source, tokens in counter.most_common()
+                ],
+                headers=['Split', 'Source', 'Tokens'],
+                tablefmt='orgtbl'
+            )
+
+        print_('=' * os.get_terminal_size().columns, end='\n\n')
+        print_('Original Tokens:')
+        print_(get_tokens_table(self.pre_processed_dataset_dict), end='\n\n')
+        print_('Sampled Tokens:')
+        print_(get_tokens_table(self.dataset_dict))
+
 
 def _tokenize(
     batch: dict[str, list[str | Any]],
@@ -180,7 +223,7 @@ def _tokenize(
     batch_text = [batch['text'][i] for i in selected_indices]
     batch = {k: [batch[k][i] for i in selected_indices] for k in keep_columns}   
 
-    batch['input_ids'] = tokenizer(
+    batch['input_ids'] = tokenizer.batch_encode_plus(
         batch_text,
         add_special_tokens=False,
         return_token_type_ids=False,

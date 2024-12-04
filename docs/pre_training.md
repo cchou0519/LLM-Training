@@ -21,7 +21,7 @@ For a complete set of parameters, please refer to [`PreTrainingDataModuleConfig`
 
 Before training begins, the framework automatically processes the data, ensuring everything is ready before training starts. This is particularly convenient when dealing with small training dataset. However, pre-training datasets are typically large, and CPUs used during training are often limited, making this step very time-consuming.
 
-To address this issue, you can set `pre_processed_data_path` and use many CPUs to execute `scripts/pre_process_pre_training_data.py` for pre-processing and saving the data in advance.
+To address this issue, you can set `pre_processed_data_path` and use many CPUs to execute `scripts/pre_process_data.py` for pre-processing and saving the data in advance.
 
 Remember to set `num_proc` to the desired number of CPUs to utilize.
 
@@ -35,7 +35,7 @@ data:
 ```
 
 ```bash
-python scripts/pre_process_pre_training_data.py -c <CONFIG_PATH>
+python scripts/pre_process_data.py -c <CONFIG_PATH>
 ```
 
 ## Data Sampling
