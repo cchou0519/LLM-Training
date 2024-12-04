@@ -11,7 +11,7 @@ from transformers import LlamaForCausalLM
 from llm_training.models.hf_compat_model import HFCompatModel
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
-from llm_training.ops.liger import *
+from llm_training.ops.liger_kernel import *
 from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
 from llm_training.utils.decorators import copy_method_signature
 
