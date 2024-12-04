@@ -2,31 +2,31 @@
 name = "llm_training"
 version = "0.1.0"
 dependencies = [
-  "accelerate>=0.28.0",
-  "datasets>=2.20.0",
-  "fire>=0.6.0",
-  "flash-attn==2.6.3",
-  "jsonargparse[signatures]==4.28.0",
-  "lightning==2.2.5",
-  "liger-kernel==0.1.1",
+  "accelerate>=1.1.1",
+  "datasets>=3.1.0",
+  "fire>=0.7.0",
+  "flash-attn==2.7.0.post2",
+  "jsonargparse[signatures]==4.34.1",
+  "lightning==2.4.0",
+  "liger-kernel==0.4.2",
   "omegaconf>=2.3.0",
-  "protobuf>=4.25.3",
-  "pydantic>=2.8.2",
-  "safetensors>=0.4.2",
+  "protobuf>=5.29.0",
+  "pydantic>=2.10.3",
+  "safetensors>=0.4.5",
   "sentencepiece>=0.2.0",
   "tabulate[widechars]>=0.9.0",
   "tokenizers==0.20.0",
-  "torch==2.3.1",
+  "torch==2.5.1",
   "transformers==4.46.3",
-  "triton==3.0.0",
-  "wandb>=0.17.0",
+  "triton==3.1.0",
+  "wandb>=0.18.7",
 ]
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-peft = ["peft>=0.11.1"]
+peft = ["peft>=0.13.2"]
 
-deepspeed = ["deepspeed==0.14.5"]
+deepspeed = ["deepspeed==0.16.0"]
 
 [project.scripts]
 llm-training = "llm_training.cli.main:main"

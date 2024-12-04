@@ -1,11 +1,11 @@
 name: llm-training
 channels:
-  - nvidia/label/cuda-12.1.0
+  - nvidia/label/cuda-12.4.0
   - nvidia
 dependencies:
   - python=3.10
   - pip
-  - pytorch::pytorch=2.3.1
-  - pytorch::pytorch-cuda=12.1
+  - pytorch::pytorch=2.5.1
+  - pytorch::pytorch-cuda=12.4
   - cuda
   - conda-forge::gxx=9
