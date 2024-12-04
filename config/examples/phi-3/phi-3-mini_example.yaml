@@ -4,12 +4,12 @@ logging_level: DEBUG
 
 trainer:
   strategy: 
-    class_path: llm_training.overrides.DeepSpeedStrategy
+    class_path: llm_training.lightning.DeepSpeedStrategy
     init_args:
       stage: 2
   precision: bf16-true
   logger:
-    class_path: llm_training.overrides.wandb.WandbLogger
+    class_path: llm_training.lightning.wandb.WandbLogger
     init_args:
       name: phi-3-mini-128k-instruct_example
       job_type: example
@@ -22,15 +22,15 @@ trainer:
   gradient_clip_val: 1.0
   callbacks:
     - class_path: LearningRateMonitor
-    - class_path: llm_training.overrides.ModelCheckpoint
+    - class_path: llm_training.lightning.ModelCheckpoint
       init_args:
         save_on_train_epoch_end: true
         save_top_k: -1
-    - class_path: llm_training.overrides.ModelCheckpoint
+    - class_path: llm_training.lightning.ModelCheckpoint
       init_args:
         save_top_k: -1
         every_n_train_steps: 5000
-    - class_path: llm_training.overrides.ModelCheckpoint
+    - class_path: llm_training.lightning.ModelCheckpoint
       init_args:
         save_top_k: 1
         every_n_train_steps: 1000
