@@ -7,27 +7,27 @@ from llm_training.data.hf_based import HFBasedDataModuleConfig
 from llm_training.utils.str_enum import StrEnum
 
 
-class ConcatMethod(StrEnum):
+class PackingMethod(StrEnum):
     NO_CONCAT = auto()
-    CONCAT_AND_TRUNCATE = auto()
+    NAIVE_PACKING = auto()
+    BEST_FIT_BIN_PACKING = auto()
 
 
 class PreTrainingDataModuleConfig(HFBasedDataModuleConfig):
     tokenizer: PreTrainedTokenizerBase
     max_length: int | None = None
     stride: int | None = None
-    concat_method: ConcatMethod | str = ConcatMethod.CONCAT_AND_TRUNCATE
-    pad_to_multiple_of: int | None = None
+    packing_method: PackingMethod | str = PackingMethod.NAIVE_PACKING
     sample_rate: dict[str, float] = Field(default_factory=dict)
-    shuffle_before_tokenization: bool = False
-    concat_and_truncate_batch_size: int = 100000
+    pre_processing_batch_size: int = 1000
+    pad_to_multiple_of: int | None = None
 
-    @field_validator('concat_method')
+    @field_validator('packing_method')
     @classmethod
-    def validate_concat_method(cls, value: ConcatMethod | str, info: ValidationInfo) -> ConcatMethod:
-        value = ConcatMethod(value.lower())
-        assert value != ConcatMethod.CONCAT_AND_TRUNCATE or info.data['max_length'] is not None, \
-            "You must set `max_length` to use `CONCAT_AND_TRUNCATE`"
+    def validate_packing_method(cls, value: PackingMethod | str, info: ValidationInfo) -> PackingMethod:
+        value = PackingMethod(value.lower())
+        assert value in (PackingMethod.NAIVE_PACKING, PackingMethod.BEST_FIT_BIN_PACKING) or info.data['max_length'] is not None, \
+            "You must set `max_length` to packing data"
         return value
     
     @field_validator('stride')
