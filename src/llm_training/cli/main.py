@@ -1,4 +1,4 @@
-from llm_training.overrides.cli import LightningCLI
+from llm_training.lightning import LightningCLI
 
 
 def main():

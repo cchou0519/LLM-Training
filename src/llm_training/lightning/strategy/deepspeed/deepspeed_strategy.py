@@ -115,7 +115,7 @@ class DeepSpeedStrategy(_DeepSpeedStrategy):
                 m.set_dtype(m.dtype)
     
     def init_deepspeed(self) -> None:
-        import deepspeed # type: ignore
+        import deepspeed  # type: ignore
         
         if self.zero3_leaf_modules:
             deepspeed.utils.set_z3_leaf_modules(self.model, self.zero3_leaf_modules)

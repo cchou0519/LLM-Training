@@ -9,9 +9,8 @@ from lightning.pytorch.cli import ArgsType, LightningArgumentParser
 from lightning.pytorch.cli import LightningCLI as _LightningCLI
 from lightning.pytorch.cli import SaveConfigCallback as _SaveConfigCallback
 
-from llm_training.overrides.callbacks import (OutputRedirection,
-                                              SaveConfigCallback,
-                                              TQDMProgressBar)
+from llm_training.lightning import (OutputRedirection, SaveConfigCallback,
+                                    TQDMProgressBar)
 
 from .trainer import Trainer
 

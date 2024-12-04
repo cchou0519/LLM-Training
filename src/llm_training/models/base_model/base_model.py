@@ -4,6 +4,9 @@ from typing import ClassVar, Generator
 import safetensors.torch
 import torch
 from torch import nn
+from torch.distributed._composable.fsdp import (MixedPrecisionPolicy,
+                                                OffloadPolicy)
+from torch.distributed.device_mesh import DeviceMesh
 
 from .base_model_config import BaseModelConfig
 
@@ -41,3 +44,31 @@ class BaseModel(nn.Module):
         cls._init_weights = bool(init_weights)
         yield
         cls._init_weights = v
+
+    def configure_tensor_parallel(self, tp_mesh: DeviceMesh) -> None:
+        if tp_mesh.size() == 1:
+            return
+        
+        raise NotImplementedError(f"`{self.__class__.__name__}` does not support tensor parallel.")
+
+    def configure_fully_sharded_data_parallel(
+        self,
+        dp_mesh: DeviceMesh,
+        reshard_after_forward: bool | int,
+        mp_policy: MixedPrecisionPolicy,
+        offload_policy: OffloadPolicy,
+        **kwargs
+    ) -> None:
+        if dp_mesh.size() == 1:
+            return
+        
+        raise NotImplementedError(f"`{self.__class__.__name__}` does not support fully sharded data parallel.")
+
+    def parallelize(
+        self,
+        dp_mesh: DeviceMesh,
+        tp_mesh: DeviceMesh,
+        **fsdp_kwargs
+    ) -> None:
+        self.configure_tensor_parallel(tp_mesh)
+        self.configure_fully_sharded_data_parallel(dp_mesh, **fsdp_kwargs)
