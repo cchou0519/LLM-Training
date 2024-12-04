@@ -615,3 +615,34 @@ def flash_attention_forward(
         )
 
     return attn_output
+
+
+def get_sequence_indices(attention_mask: torch.Tensor) -> tuple[int, int, int]:
+    sequence_indices = []
+    for i, a in enumerate(attention_mask):
+        current_sid = a[0]
+        s = 0
+        e = -1
+        for sid in a:
+            if sid == current_sid:
+                e += 1
+            else:
+                sequence_indices.append((i, s, e))
+                e += 1
+                s = e
+                current_sid = sid
+        else:
+            sequence_indices.append((i, s, e))
+    return sequence_indices
+
+
+def prepare_packed_4d_causal_mask(
+    attention_mask: torch.Tensor,
+    causal_mask: torch.Tensor,
+    inplace: bool = False
+) -> torch.Tensor:
+    causal_mask = causal_mask if inplace else causal_mask.clone()
+    min_dtype = torch.finfo(causal_mask.dtype).min
+    for i, s, e in get_sequence_indices(attention_mask):
+        causal_mask[i, :, s:e + 1, :s] = min_dtype
+    return causal_mask
