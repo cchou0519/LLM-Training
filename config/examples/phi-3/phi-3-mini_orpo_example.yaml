@@ -1,0 +1,69 @@
+seed_everything: 42
+float32_matmul_precision: medium
+logging_level: DEBUG
+
+trainer:
+  strategy: 
+    class_path: llm_training.lightning.DeepSpeedStrategy
+    init_args:
+      stage: 2
+      exclude_frozen_parameters: true
+  precision: bf16-true
+  logger:
+    class_path: llm_training.lightning.WandbLogger
+    init_args:
+      name: phi-3-mini-128k-instruct_orpo_example
+      job_type: example
+      project: llm-training
+      save_dir: logs
+      save_code: true
+  max_epochs: 3
+  val_check_interval: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  callbacks:
+    - class_path: LearningRateMonitor
+    - class_path: llm_training.lightning.ModelCheckpoint
+      init_args:
+        save_on_train_epoch_end: true
+        save_top_k: 1
+
+model:
+  class_path: llm_training.lms.DPO
+  init_args.config:
+    model:
+      model_class: llm_training.models.Phi3
+      model_config:
+        hf_path: microsoft/Phi-3-mini-128k-instruct
+        torch_dtype: bfloat16
+        attn_implementation: flash_attention_2
+        enable_gradient_checkpointing: true
+    
+    beta: 0.1
+
+    optim:
+      optimizer_class: torch.optim.AdamW
+      optimizer_kwargs:
+        lr: 1e-6
+      lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
+      lr_scheduler_kwargs:
+        num_warmup_steps: 100
+        min_lr: 1e-7
+
+data:
+  class_path: llm_training.data.PreferenceTuningDataModule
+  init_args.config:
+    dataset_kwargs:
+      path: trl-internal-testing/Anthropic-hh-rlhf-processed
+    tokenizer:
+      class_path: HFTokenizer
+      init_args:
+        path: microsoft/Phi-3-mini-128k-instruct
+    chat_template: phi-3
+    batch_size: 1
+    max_length: 4096
+    pad_to_multiple_of: 64
+    validation_split: null
+    num_proc: 4
+    num_workers: 4
+    enable_cache: true
