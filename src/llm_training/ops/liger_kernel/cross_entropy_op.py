@@ -30,7 +30,7 @@ def cross_entropy(
         logits,
         labels,
         ignore_index
-    )
+    )[0]
 
 
 def fused_linear_cross_entropy(
