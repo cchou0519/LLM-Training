@@ -9,7 +9,7 @@ trainer:
       stage: 2
   precision: bf16-true
   logger:
-    class_path: llm_training.lightning.wandb.WandbLogger
+    class_path: llm_training.lightning.WandbLogger
     init_args:
       name: phi-3-mini-128k-instruct_pt_example
       job_type: example
