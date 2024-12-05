@@ -3,7 +3,7 @@ from typing import Callable
 from llm_training.lms.model_provider import ModelProvider
 from llm_training.models.base_model.base_model import BaseModel
 
-ModelType = BaseModel | ModelProvider | Callable[[], BaseModel]
+ModelType = ModelProvider | BaseModel | Callable[[], BaseModel]
 
 
 def get_model(model_or_provider: ModelType) -> BaseModel:
