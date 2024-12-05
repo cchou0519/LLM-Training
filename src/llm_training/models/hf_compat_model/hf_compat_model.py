@@ -4,7 +4,7 @@ from typing import Generator
 import torch
 from accelerate import init_empty_weights
 from transformers import (AutoConfig, AutoModel, AutoTokenizer,
-                          PretrainedConfig, PreTrainedModel,
+                          GenerationConfig, PretrainedConfig, PreTrainedModel,
                           PreTrainedTokenizerBase)
 from transformers.models.auto.auto_factory import _BaseAutoModelClass
 
@@ -39,7 +39,8 @@ class HFCompatModel(BaseModel):
         default_kwargs = {
             'trust_remote_code': self.config.trust_remote_code,
             'revision': self.config.revision,
-            'attn_implementation': self.config.attn_implementation
+            'attn_implementation': self.config._attn_implementation,
+            **self.config.hf_extra_kwargs
         }
         kwargs = default_kwargs | kwargs
         return self.hf_config_class.from_pretrained(self.config.hf_path, **kwargs)
@@ -50,7 +51,8 @@ class HFCompatModel(BaseModel):
             'torch_dtype': self.config.torch_dtype,
             'trust_remote_code': self.config.trust_remote_code,
             'revision': self.config.revision,
-            'attn_implementation': self.config.attn_implementation
+            'attn_implementation': self.config._attn_implementation,
+            **self.config.hf_extra_kwargs
         }
         kwargs = default_kwargs | kwargs
         return self.hf_model_class.from_pretrained(self.config.hf_path, **kwargs)
@@ -78,10 +80,18 @@ class HFCompatModel(BaseModel):
             if issubclass(self.hf_model_class, _BaseAutoModelClass):
                 default_kwargs = {}
                 default_kwargs['trust_remote_code'] = self.config.trust_remote_code
-                default_kwargs['attn_implementation'] = self.config.attn_implementation
+                default_kwargs['attn_implementation'] = self.config._attn_implementation
                 kwargs = default_kwargs | kwargs
-                return self.hf_model_class.from_config(self.hf_config, **kwargs)
-            return self.hf_model_class(self.hf_config)
+                model = self.hf_model_class.from_config(self.hf_config, **kwargs)
+            else:
+                model = self.hf_model_class(self.hf_config)
+        
+        try:
+            model.generation_config = GenerationConfig.from_pretrained(self.config.hf_path)
+        except OSError:
+            ...
+
+        return model
     
     def convert_state_dict_from_hf(self, hf_state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return hf_state_dict
@@ -105,4 +115,5 @@ class HFCompatModel(BaseModel):
             hf_model = self.construct_hf_model()
         state_dict = self.convert_state_dict_to_hf(self.state_dict())
         hf_model.load_state_dict(state_dict, assign=True)
+        hf_model.tie_weights()
         return hf_model

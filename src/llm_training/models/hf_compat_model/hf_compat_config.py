@@ -1,6 +1,7 @@
 from typing import Literal
 
 import torch
+from pydantic import Field
 
 from llm_training.models.base_model.base_model_config import BaseModelConfig
 
@@ -14,6 +15,7 @@ class HFCompatModelConfig(BaseModelConfig):
     low_cpu_mem_usage: bool = True
     revision: str = 'main'
     attn_implementation: Literal['eager', 'sdpa', 'flash_attention_2'] | None = None
+    hf_extra_kwargs: dict = Field(default_factory=dict)
 
     load_hf_weights: bool = True
 
