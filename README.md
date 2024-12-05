@@ -55,4 +55,4 @@ python scripts/convert_to_hf.py <CKPT_PATH> <OUTPUT_PATH>
 
 ### Examples
 
-- [Continue Training Phi-3](docs/phi3_example.md)
+- [Continue Training Phi-3](docs/phi-3_example.md)
