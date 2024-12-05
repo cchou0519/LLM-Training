@@ -124,7 +124,7 @@ class DPO(BaseLightningModule):
         logits = model(
             input_ids=input_ids,
             attention_mask=attention_mask
-        )
+        ).logits
         labels = shift_labels(labels, self.config.ignore_index)
 
         loss_mask = labels != self.config.ignore_index
