@@ -1,16 +1,18 @@
 import logging
 import os
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable
 
-import torch
 from lightning.pytorch import LightningDataModule, LightningModule
 from lightning.pytorch import Trainer as _Trainer
 from lightning.pytorch.cli import ArgsType, LightningArgumentParser
 from lightning.pytorch.cli import LightningCLI as _LightningCLI
 from lightning.pytorch.cli import SaveConfigCallback as _SaveConfigCallback
+from lightning.pytorch.plugins.environments import (ClusterEnvironment,
+                                                    LightningEnvironment,
+                                                    SLURMEnvironment)
 
-from llm_training.lightning import (OutputRedirection, SaveConfigCallback,
-                                    TQDMProgressBar)
+from llm_training.lightning import (ExtraConfig, OutputRedirection,
+                                    SaveConfigCallback, TQDMProgressBar)
 
 from .trainer import Trainer
 
@@ -63,35 +65,22 @@ class LightningCLI(_LightningCLI):
         )
 
     def add_arguments_to_parser(self, parser: LightningArgumentParser) -> None:
-        parser.add_argument('--float32-matmul-precision', type=Optional[str], choices=['medium', 'high', 'highest'], default=None)
-        parser.add_argument('--logging-level', type=Union[str, int], default=logging.INFO)        
+        parser.add_argument('--float32-matmul-precision', type=str | None, choices=['medium', 'high', 'highest'], default=None)
+        parser.add_argument('--logging-level', type=str | int, default=logging.INFO)        
         parser.add_lightning_class_args(OutputRedirection, 'output_redirection')
         parser.add_lightning_class_args(TQDMProgressBar, 'tqdm_progress')
 
-    def _setup_extra_args(self) -> None:
-        float32_matmul_precision = self._get(self.config, 'float32_matmul_precision')
-        if float32_matmul_precision is not None:
-            torch.set_float32_matmul_precision(float32_matmul_precision)
+    def _instantiate_extra_config(self) -> ExtraConfig:
+        return ExtraConfig(
+            float32_matmul_precision=self._get(self.config, 'float32_matmul_precision'),
+            logging_level=self._get(self.config, 'logging_level')
+        )
+
+    def _instantiate_trainer(self, config, callbacks):
+        callbacks.insert(0, self._instantiate_extra_config())
+
+        if int(os.getenv('SLURM_NTASKS', '0')) == 1:
+            del os.environ['SLURM_JOB_ID']
+            del os.environ['SLURM_NTASKS']
         
-        logging_level = self._get(self.config, 'logging_level')
-        if isinstance(logging_level, str):
-            logging_level = getattr(logging, logging_level.upper())
-        
-        logging.getLogger('llm_training').setLevel(logging_level)
-        logging.getLogger('lightning').setLevel(logging_level)
-
-    def before_instantiate_classes(self) -> None:
-        self._setup_extra_args()
-
-        config = self.config.get(self.config.get('subcommand'))
-
-        if config is None:
-            return
-
-        extra_plugins = []
-        if int(os.getenv('SLURM_NTASKS', '0')) > 1:
-            extra_plugins += [{'class_path': 'SLURMEnvironment', 'init_args': {'auto_requeue': False}}]
-        else:
-            extra_plugins += [{'class_path': 'LightningEnvironment'}]
-        config.trainer.plugins = config.trainer.plugins or []
-        config.trainer.plugins += extra_plugins
+        return super()._instantiate_trainer(config, callbacks)
