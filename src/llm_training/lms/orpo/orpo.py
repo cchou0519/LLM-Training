@@ -1,3 +1,4 @@
+import gc
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -5,8 +6,8 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor.parallel import loss_parallel
 from torch.distributed.tensor import DTensor
+from torch.distributed.tensor.parallel import loss_parallel
 
 from llm_training.lightning.strategy.fsdp2.fsdp2_strategy import FSDP2Strategy
 from llm_training.lms.base_lm import BaseLightningModule
@@ -187,6 +188,11 @@ class ORPO(BaseLightningModule):
         return {k + suffix: v for k, v in metrics.items()}
 
     def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
+        max_seq_len = max(batch['chosen_input_ids'].size(1), batch['rejected_input_ids'].size(1))
+        if max_seq_len >= self.config.empty_cache_threshold:
+            gc.collect()
+            torch.cuda.empty_cache()
+
         outputs = self.forward_batch(batch)
 
         metrics = {}

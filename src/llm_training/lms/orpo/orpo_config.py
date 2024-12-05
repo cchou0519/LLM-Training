@@ -6,3 +6,4 @@ class ORPOConfig(BaseLightningModuleConfig):
     model: ModelType
     beta: float = 0.1
     ignore_index: int = -100
+    empty_cache_threshold: int | None = None
