@@ -208,8 +208,8 @@ def _tokenize(
     keep_columns: bool | Iterable[str] = False
 ):
     if 'source' not in batch:
-        batch['source'] = [None] * len(batch_text)
-    
+        batch['source'] = [None] * len(batch['text'])
+
     if keep_columns == True:
         keep_columns = set(batch.keys())
     elif keep_columns == False:
@@ -221,7 +221,7 @@ def _tokenize(
 
     selected_indices = [i for i, x in enumerate(batch['text']) if x]
     batch_text = [batch['text'][i] for i in selected_indices]
-    batch = {k: [batch[k][i] for i in selected_indices] for k in keep_columns}   
+    batch = {k: [batch[k][i] for i in selected_indices] for k in keep_columns}
 
     batch['input_ids'] = tokenizer.batch_encode_plus(
         batch_text,
