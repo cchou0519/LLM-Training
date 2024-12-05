@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 class OverlongHandlingMethod(StrEnum):
     DROP = auto()
-    TRUNCATE = auto()
 
 
 class PreferenceTuningDataModuleConfig(HFBasedDataModuleConfig):

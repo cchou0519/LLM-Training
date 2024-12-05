@@ -1,5 +1,4 @@
 import torch
-from flash_attn.ops.triton.layer_norm import rms_norm_fn
 
 
 def rms_norm(
@@ -7,9 +6,9 @@ def rms_norm(
     weight: torch.Tensor,
     eps: float
 ) -> torch.Tensor:
-    return rms_norm_fn(
-        x,
-        weight=weight,
-        bias=None,
-        eps=eps
-    )
+    dtype = x.dtype
+    x = x.to(torch.float32)
+    variance = x.pow(2).mean(-1, keepdim=True)
+    x = x * torch.rsqrt(variance + eps)
+    x = weight * x.to(dtype)
+    return x

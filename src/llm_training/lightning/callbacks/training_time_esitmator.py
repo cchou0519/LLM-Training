@@ -39,10 +39,10 @@ class TrainingTimeCallback(Callback):
 
     def on_train_batch_end(self, trainer: Trainer, pl_module: LightningModule, outputs: Tensor | Mapping[str, Any] | None, batch: Any, batch_idx: int) -> None:
         if trainer.global_step == self.num_test_steps:
+            self.end_time = time.time()
             trainer.should_stop = True
 
     def on_fit_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        self.end_time = time.time()
         self.num_total_steps = trainer.estimated_stepping_batches
 
         if trainer.is_global_zero:

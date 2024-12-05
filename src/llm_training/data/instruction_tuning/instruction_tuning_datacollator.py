@@ -5,7 +5,7 @@ import torch
 from llm_training.data.base_datacollator import BaseDataCollator
 
 from .instruction_tuning_datamodule_config import (
-    ConcatMethod, InstructionTuningDataModuleConfig)
+    PackingMethod, InstructionTuningDataModuleConfig)
 
 T = TypeVar('T')
 
@@ -16,16 +16,7 @@ class InstructionTuningDataCollator(BaseDataCollator):
         super().__init__(config)
 
         assert 'pad_token' in config.tokenizer.special_tokens_map, '`pad_token` is not specified. Please set it manually.'
-
-    def _merge_group(self, group: list[list[T]]) -> list[T]:
-        return [x for g in group for x in g]
-
-    def _create_packed_attention_mask(self, group: list[list[int]]) -> list[int]:
-        return [i + 1 for i, g in enumerate(group) for _ in g]
-
-    def _create_packed_position_ids(self, group: list[list[int]]) -> list[int]:
-        return [i for g in group for i in range(len(g))]
-
+    
     def _pad_to_longest(self, batch: list[list[T]], padding_value: T) -> list[list[T]]:
         n = max(len(y) for y in batch)
         if self.config.pad_to_multiple_of is not None:
@@ -47,17 +38,16 @@ class InstructionTuningDataCollator(BaseDataCollator):
         batch_labels = []
         
         for x in batch:
-            if self.config.concat_method == ConcatMethod.NO_CONCAT:
-                input_ids = x['input_ids']
-                labels = x['labels']
+            input_ids = x['input_ids']
+            labels = x['labels']
+
+            if self.config.packing_method == PackingMethod.NO_PACKING:
                 n = len(input_ids)
                 position_ids = list(range(n))
                 attention_mask = [1] * n
-            elif self.config.concat_method == ConcatMethod.GROUP_BY_LENGTH:                
-                input_ids = self._merge_group(x['input_ids_group'])
-                attention_mask = self._create_packed_attention_mask(x['input_ids_group'])
-                position_ids = self._create_packed_position_ids(x['input_ids_group'])
-                labels = self._merge_group(x['labels_group'])
+            elif self.config.packing_method == PackingMethod.GROUP_BY_LENGTH:
+                position_ids = list(range(n))
+                attention_mask = x['attention_mask']
 
             batch_input_ids.append(input_ids)
             batch_attention_mask.append(attention_mask)

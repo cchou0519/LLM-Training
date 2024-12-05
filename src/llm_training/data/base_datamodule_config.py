@@ -8,5 +8,6 @@ class BaseDataModuleConfig(BaseModel):
     num_workers: int = 0
     pin_memory: bool = False
     prepare_data_per_node: bool = False
+    prefetch_factor: int | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

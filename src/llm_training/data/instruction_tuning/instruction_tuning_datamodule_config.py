@@ -17,8 +17,8 @@ class OverlongHandlingMethod(StrEnum):
     TRUNCATE = auto()
 
 
-class ConcatMethod(StrEnum):
-    NO_CONCAT = auto()
+class PackingMethod(StrEnum):
+    NO_PACKING = auto()
     GROUP_BY_LENGTH = auto()
 
 
@@ -27,7 +27,7 @@ class InstructionTuningDataModuleConfig(HFBasedDataModuleConfig):
     chat_template: str | None = None
     max_length: int | None = None
     overlong_handling_method: OverlongHandlingMethod | str = OverlongHandlingMethod.DROP
-    concat_method: ConcatMethod | str = ConcatMethod.NO_CONCAT
+    packing_method: PackingMethod | str = PackingMethod.NO_PACKING
     pad_to_multiple_of: int | None = None
     add_default_system_prompt_rate: float | None = None
     default_system_prompt: str | None = None
@@ -51,7 +51,7 @@ class InstructionTuningDataModuleConfig(HFBasedDataModuleConfig):
     def validate_overlong_handling_method(cls, value: OverlongHandlingMethod | str) -> OverlongHandlingMethod:
         return OverlongHandlingMethod(value.lower())
 
-    @field_validator('concat_method')
+    @field_validator('packing_method')
     @classmethod
-    def validate_concat_method(cls, value: ConcatMethod | str) -> ConcatMethod:
-        return ConcatMethod(value.lower())
+    def validate_packing_method(cls, value: PackingMethod | str) -> PackingMethod:
+        return PackingMethod(value.lower())

@@ -1,8 +1,10 @@
 from typing import Literal
 
 import torch
+import torch.nn.functional as F
 from liger_kernel.ops.cross_entropy import LigerCrossEntropyFunction
-from liger_kernel.ops.fused_linear_cross_entropy import LigerFusedLinearCrossEntropyFunction
+from liger_kernel.ops.fused_linear_cross_entropy import \
+    LigerFusedLinearCrossEntropyFunction
 
 
 def cross_entropy(
@@ -16,12 +18,19 @@ def cross_entropy(
     if logits.dim() == 3 and labels.dim() == 2:
         logits = logits.flatten(end_dim=1)
         labels = labels.flatten(end_dim=1)
-
+    
+    if logits.device.type != 'cuda':
+        return F.cross_entropy(
+            logits,
+            labels,
+            ignore_index=ignore_index
+        )
+    
     return LigerCrossEntropyFunction.apply(
         logits,
         labels,
         ignore_index
-    )
+    )[0]
 
 
 def fused_linear_cross_entropy(

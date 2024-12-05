@@ -9,9 +9,10 @@ from transformers import LlamaConfig as HFLlamaConfig
 from transformers import LlamaForCausalLM
 
 from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.models.utils.modeling_outputs import CausalLMOutput
+from llm_training.ops import liger_kernel, rms_norm
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
-from llm_training.ops.liger import *
 from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
 from llm_training.utils.decorators import copy_method_signature
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class Llama(HFCompatModel):
     config: LlamaConfig
+    layers: list["LlamaDecoderLayer"]
 
     config_class = LlamaConfig
     hf_config_class = HFLlamaConfig
@@ -115,14 +117,21 @@ class Llama(HFCompatModel):
     
     def get_output_embeddings(self) -> nn.Linear:
         return self.lm_head
+    
+    def set_input_embeddings(self, embedding: nn.Embedding) -> None:
+        self.embed_tokens = embedding
+
+    def set_output_embeddings(self, linear: nn.Linear) -> None:
+        self.lm_head = linear
 
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
-        inputs_embeds: torch.Tensor | None = None
-    ) -> torch.Tensor:
+        inputs_embeds: torch.Tensor | None = None,
+        return_last_hidden_states: bool = False
+    ) -> CausalLMOutput:
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
         elif input_ids is not None:
@@ -163,12 +172,16 @@ class Llama(HFCompatModel):
                 position_embeddings=position_embeddings,
                 attention_mask=attention_mask
             )
+
+        last_hidden_states = hidden_states if return_last_hidden_states else None
         hidden_states = self.norm(hidden_states)
 
         logits = self.lm_head(hidden_states)
-        logits = logits.float()
 
-        return logits
+        return CausalLMOutput(
+            logits=logits,
+            last_hidden_states=last_hidden_states
+        )
 
     @copy_method_signature(forward)
     def __call__(): ...
@@ -300,6 +313,12 @@ class LlamaRotaryEmbedding(nn.Module):
         x: torch.Tensor,
         position_ids: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.cos.device != x.device:
+            self.cos = self.cos.to(x.device)
+
+        if self.sin.device != x.device:
+            self.sin = self.sin.to(x.device)
+
         seq_len = position_ids.max() + 1
 
         self._set_cos_sin_cache(
@@ -326,11 +345,14 @@ class LlamaMLP(nn.Module):
         # self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x: torch.Tensor):
-        return swiglu(
+        return liger_kernel.swiglu(
             x,
             w1=self.gate_proj.weight,
+            b1=self.gate_proj.bias,
             w2=self.up_proj.weight,
-            w3=self.down_proj.weight
+            b2=self.up_proj.bias,
+            w3=self.down_proj.weight,
+            b3=self.down_proj.bias
         )
 
 
@@ -457,7 +479,7 @@ class LlamaAttention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -561,7 +583,7 @@ class LlamaFlashAttention2(LlamaAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         attn_output = self.core_attention_forward(
             query_states,
@@ -638,7 +660,7 @@ class LlamaSdpaAttention(LlamaAttention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)

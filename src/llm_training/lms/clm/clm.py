@@ -1,17 +1,21 @@
 import logging
+from contextlib import nullcontext
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
+from torch.distributed.tensor.parallel import loss_parallel
 from torchmetrics.text import Perplexity
 
+from llm_training.lightning.strategy import FSDP2Strategy
 from llm_training.lms.base_lm import BaseLightningModule
 from llm_training.lms.protos import CausalLMProto
 from llm_training.lms.utils import get_model
 from llm_training.metrics import ConsumedSamples, ConsumedTokens
 from llm_training.models.base_model.base_model import BaseModel
 from llm_training.ops import shift_labels
-from llm_training.ops.liger import cross_entropy
+from llm_training.ops.liger_kernel import cross_entropy
 
 from .clm_config import CLMConfig
 
@@ -79,41 +83,58 @@ class CLM(BaseLightningModule):
         if self.config.neftune_alpha is not None:
             self.register_neftune_hook()
 
-    def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
-        assert self.model.no_split_modules
-        self.model = self.fsdp_wrap_model(self.model, 'model', state_dict, self.model.no_split_modules)
+    def on_fsdp_parallelize_model(self, **kwargs) -> None:
+        self.model.parallelize(**kwargs)
 
     def compute_loss(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if isinstance(self.strategy, FSDP2Strategy) and self.strategy.tp_size > 1:
+            with loss_parallel():
+                return F.cross_entropy(
+                    logits.flatten(end_dim=1),
+                    labels.flatten(end_dim=1),
+                    ignore_index=self.config.ignore_index
+                )
+        
         return cross_entropy(
-            logits,
-            labels,
-            ignore_index=self.config.ignore_index,
-            reduction='mean'
+            logits=logits,
+            labels=labels,
+            ignore_index=self.config.ignore_index
         )
+
+    def backward(self, loss: torch.Tensor, *args, **kwargs) -> None:
+        backward_ctx = nullcontext()
+        if isinstance(self.strategy, FSDP2Strategy) and self.strategy.tp_size > 1:
+            backward_ctx = loss_parallel()
+
+        with backward_ctx:
+            return super().backward(loss, *args, **kwargs)
 
     def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         labels = shift_labels(batch['labels'], self.config.ignore_index)
-
+        
         if self.config.neftune_alpha is not None:
             self._current_attention_mask = batch['attention_mask']
 
-        logits = self.model(
+        outputs = self.model(
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
             position_ids=batch.get('position_ids', None)
         )
+        logits = outputs.logits.float()
 
         if self.config.neftune_alpha is not None:
             self.log('NEFTune Alpha', self.config.neftune_alpha)
             self._current_attention_mask = None
 
         # compute CE loss after ppl, because some CE kernels lead to wrong ppl.
-        self.train_perplexity(logits, labels)
+        if self.config.log_perplexity:
+            self.train_perplexity(logits, labels)
+            self.log('Perplexity/Train/Step', self.train_perplexity)
+        
         loss = self.compute_loss(logits, labels)
-
+        
         self.log('loss', loss, prog_bar=True, logger=False)
         self.log('Loss/Train/Step', loss)
-        self.log('Perplexity/Train/Step', self.train_perplexity)
 
         if self.grad_norm is not None:
             self.log('Gradient Norm', self.grad_norm)
@@ -129,17 +150,20 @@ class CLM(BaseLightningModule):
     def validation_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int, dataloader_idx: int = 0):
         batch_size = batch['input_ids'].size(0)
         labels = shift_labels(batch['labels'], self.config.ignore_index)
-        logits = self.model(
+        outputs = self.model(
             input_ids=batch['input_ids'],
             attention_mask=batch['attention_mask'],
             position_ids=batch.get('position_ids', None)
         )
+        logits = outputs.logits.float()
 
-        self.val_perplexity.update(logits, labels)
+        if self.config.log_perplexity:
+            self.val_perplexity.update(logits, labels)
+            self.log('Perplexity/Val', self.val_perplexity)
+
         loss = self.compute_loss(logits, labels)
 
         self.log('Loss/Val', loss, batch_size=batch_size, sync_dist=True)
-        self.log('Perplexity/Val', self.val_perplexity)
 
     def get_model(self) -> BaseModel:
         return self.model

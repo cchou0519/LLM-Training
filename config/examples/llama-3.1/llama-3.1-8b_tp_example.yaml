@@ -1,0 +1,59 @@
+seed_everything: 42
+float32_matmul_precision: medium
+logging_level: DEBUG
+
+trainer:
+  strategy: 
+    class_path: llm_training.lightning.FSDP2Strategy
+    init_args:
+      tensor_parallel_size: 8
+      reshard_after_forward: false
+  precision: bf16-true
+  logger:
+    class_path: llm_training.lightning.WandbLogger
+    init_args:
+      name: llama-3.1-8b_tp_example
+      job_type: example
+      project: llm-training
+      save_dir: logs
+      save_code: true
+  max_epochs: 3
+  val_check_interval: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  callbacks:
+    - class_path: LearningRateMonitor
+    - class_path: llm_training.lightning.ModelCheckpoint
+      init_args:
+        save_on_train_epoch_end: true
+        save_top_k: 1
+
+model:
+  class_path: llm_training.lms.CLM
+  init_args.config:
+    model:
+      model_class: llm_training.models.HFLlamaCausalLM
+      model_config:
+        hf_path: meta-llama/Llama-3.1-8B
+        enable_gradient_checkpointing: true
+        hf_extra_kwargs:
+          use_cache: false
+        
+    log_perplexity: false
+    
+    optim:
+      optimizer_class: torch.optim.AdamW
+      optimizer_kwargs:
+        lr: 3e-5
+      lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
+      lr_scheduler_kwargs:
+        num_warmup_steps: 10000
+        min_lr: 3e-6
+
+data:
+  class_path: llm_training.data.DummyDataModule
+  init_args.config:
+    batch_size: 1
+    vocab_size: 128256
+    max_length: 131072
+    num_tokens: 50_000_000_000 # 50B

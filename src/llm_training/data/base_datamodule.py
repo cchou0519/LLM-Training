@@ -1,5 +1,5 @@
 import logging
-import os
+import shutil
 from functools import partial
 from typing import Mapping, TextIO
 
@@ -55,9 +55,9 @@ class BaseDataModule(L.LightningDataModule):
     def print_dataset_info(self, file: TextIO | None = None) -> None:
         print_ = partial(print, file=file)
         def print_header(header: str) -> None:
-            n = os.get_terminal_size().columns
+            n = shutil.get_terminal_size().columns
             m = (n - len(header) - 2) // 2
-            divider = '=' * m
+            divider = '―' * m
             header = f'{divider} {header} {divider}'
             print_(f'{header:^{n}}', end='\n\n')
         
@@ -75,7 +75,8 @@ class BaseDataModule(L.LightningDataModule):
             batch_size=self.config.batch_size,
             num_workers=self.config.num_workers,
             collate_fn=self.datacollator,
-            pin_memory=self.config.pin_memory
+            pin_memory=self.config.pin_memory,
+            prefetch_factor=self.config.prefetch_factor
         )
 
         if split == 'train':
@@ -109,10 +110,10 @@ class BaseDataModule(L.LightningDataModule):
             else:
                 setattr(self, v, getattr(super(), v))
     
-    def train_dataloader(self): ...
+    def train_dataloader(self) -> DataLoader | None: ...
 
-    def val_dataloader(self): ...
+    def val_dataloader(self) -> DataLoader | None: ...
     
-    def test_dataloader(self): ...
+    def test_dataloader(self) -> DataLoader | None: ...
 
-    def predict_dataloader(self): ...
+    def predict_dataloader(self) -> DataLoader | None: ...

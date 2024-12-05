@@ -1,11 +1,11 @@
-import gc
 import inspect
 import logging
 import re
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, ContextManager, Iterable, ParamSpec, TypeVar
+from typing import Callable, ContextManager, ParamSpec, TypeVar
 
+import safetensors.torch
 import torch
 import torch.distributed
 import torch.utils.checkpoint
@@ -13,13 +13,11 @@ from accelerate import init_empty_weights
 from lightning import LightningModule, Trainer
 from lightning.pytorch.strategies import Strategy
 from torch import nn
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp.wrap import CustomPolicy, _Policy, wrap
-from torch.optim.optimizer import Optimizer
+from torch.distributed.tensor import DTensor, distribute_tensor
 from tqdm.auto import tqdm
 
+from llm_training.lightning import DeepSpeedStrategy, FSDP2Strategy
 from llm_training.models.base_model.base_model import BaseModel
-from llm_training.overrides.strategies import DeepSpeedStrategy, FSDPStrategy
 from llm_training.utils.context_managers import ContextManagers
 
 from .base_lm_config import BaseLightningModuleConfig
@@ -30,19 +28,16 @@ R = TypeVar('R')
 logger = logging.getLogger(__name__)
 
 class BaseLightningModule(LightningModule):
-    _fsdp_module: FSDP | None
-
     def __init__(self, config: BaseLightningModuleConfig) -> None:
         super().__init__()
 
         self.config = config
         self._grad_norm = None
-        self._fsdp_module = None
         self.configure_model = self._wrap_configure_model(self.configure_model)
         
     @property
     def has_pre_trained_weights(self) -> bool:
-        return False
+        return self.config.pre_trained_weights is not None
 
     @property
     def strategy(self) -> Strategy | None:
@@ -57,7 +52,7 @@ class BaseLightningModule(LightningModule):
 
     @property
     def is_using_fsdp(self) -> bool:
-        return isinstance(self.strategy, FSDPStrategy)
+        return isinstance(self.strategy, FSDP2Strategy)
     
     @property
     def is_loading_from_checkpoint(self) -> bool:
@@ -102,7 +97,7 @@ class BaseLightningModule(LightningModule):
         return self._grad_norm
 
     def get_pre_trained_weights(self) -> dict[str, torch.Tensor]:
-        raise NotImplementedError()
+        return safetensors.torch.load_file(self.config.pre_trained_weights)
 
     @staticmethod
     @contextmanager
@@ -149,6 +144,32 @@ class BaseLightningModule(LightningModule):
                 progress_bar.set_postfix_str(n)
                 progress_bar.update()
 
+    def _fsdp2_load_state_dict(self, state_dict: dict[str, torch.Tensor] | None):
+        device = self.strategy.root_device
+        for m in self.modules():
+            if (
+                any(t.is_meta for t in m.parameters(recurse=False))
+                or any(t.is_meta for t in m.buffers(recurse=False))
+            ):
+                m.to_empty(device=device, recurse=False)
+
+        with self._get_weight_loading_progress_bar() as progress_bar:
+            for n, p in self.named_parameters():
+                w = torch.empty(p.shape, dtype=p.dtype, device=device)
+
+                if self.global_rank == 0:
+                    w.copy_(state_dict[n])
+
+                torch.distributed.broadcast(w, src=0)
+
+                if isinstance(p, DTensor):
+                    w = distribute_tensor(w, p.device_mesh, p.placements)               
+
+                p.data.copy_(w)
+
+                progress_bar.set_postfix_str(n)
+                progress_bar.update()
+    
     def load_pre_trained_weights(self) -> None:
         with self.get_pre_trained_weights_context():
             state_dict = self.get_pre_trained_weights() if self.global_rank == 0 else None
@@ -156,14 +177,13 @@ class BaseLightningModule(LightningModule):
         if self.is_using_ds_z3:
             self._ds_z3_load_state_dict(state_dict)
         elif self.is_using_fsdp:
-            # Do nothing, weight loading happens in model wrapping
-            pass
+            self._fsdp2_load_state_dict(state_dict)
         elif self._trainer is not None and self._trainer.num_devices > 1:
             with self._get_weight_loading_progress_bar() as progress_bar:
+                if self.global_rank == 0:
+                    self.load_state_dict(state_dict)
+                
                 for n, p in self.named_parameters():
-                    if self.global_rank == 0:
-                        p.data.copy_(state_dict[n])
-
                     torch.distributed.broadcast(p.data, src=0)
                     progress_bar.set_postfix_str(n)
                     progress_bar.update()
@@ -175,75 +195,7 @@ class BaseLightningModule(LightningModule):
             return init_empty_weights(include_buffers=False)
         return BaseModel.init_weights_context(self.should_initialize_weights)
 
-    def fsdp_wrap_model(
-        self,
-        model: nn.Module,
-        name: str,
-        state_dict: dict[str, torch.Tensor] | None,
-        modules_to_wrap: Iterable[type[nn.Module] | str] | None = None,
-        auto_wrap_policy: _Policy | None = None,
-        training: bool = True
-    ) -> FSDP:
-        assert (
-            modules_to_wrap is not None or auto_wrap_policy is not None
-            and modules_to_wrap is None or auto_wrap_policy is None
-        )
-
-        module_to_name = {m: f'{name}.{n}' for n, m in model.named_modules()}
-        progress_bar = self._get_weight_loading_progress_bar(model, name)
-
-        def param_init_fn(module: torch.nn.Module):
-            module_name = module_to_name[module]
-
-            if (
-                any(t.is_meta for t in module.parameters(recurse=False))
-                or any(t.is_meta for t in module.buffers(recurse=False))
-            ):
-                module.to_empty(device=self.strategy.root_device, recurse=False)
-            
-            if self.global_rank == 0:
-                if self.should_load_pre_trained_weights:
-                    for n, p in module.named_parameters(module_name, recurse=False):
-                        p.data.copy_(state_dict[n])
-
-                        progress_bar.set_postfix_str(n)
-                        progress_bar.update()
-                elif self.should_initialize_weights:
-                    model._init_weights_impl(module)
-                    n = sum(1 for _ in module.parameters(recurse=False))
-                    progress_bar.update(n)
-
-        def wrap_policy_fn(module: nn.Module):
-            for m in modules_to_wrap:
-                if isinstance(m, nn.Module) and m is module:
-                    return True
-                
-                if isinstance(m, str) and m == module.__class__.__name__:
-                    return True
-                
-                if isinstance(m, type) and m == module.__class__:
-                    return True
-            
-            return False
-
-        if auto_wrap_policy is None:
-            auto_wrap_policy = CustomPolicy(wrap_policy_fn)
-
-        model = wrap(
-            model,
-            param_init_fn=param_init_fn,
-            sync_module_states=self.should_sync_weights,
-            auto_wrap_policy=auto_wrap_policy
-        )
-
-        if training:
-            assert self._fsdp_module is None or self.trainer.gradient_clip_val is not None
-            self._fsdp_module = model
-
-        progress_bar.close()
-        return model
-
-    def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
+    def on_fsdp_parallelize_model(self, **kwargs) -> None:
         raise NotImplementedError()
 
     def on_after_configure_model(self) -> None:
@@ -256,24 +208,17 @@ class BaseLightningModule(LightningModule):
                         m.eval().requires_grad_(False)
                         break
 
+        if isinstance(self.strategy, FSDP2Strategy):
+            self.on_fsdp_parallelize_model(
+                dp_mesh=self.strategy.dp_mesh,
+                tp_mesh=self.strategy.tp_mesh,
+                reshard_after_forward=self.strategy.reshard_after_forward,
+                mp_policy=self.strategy.mp_policy,
+                offload_policy=self.strategy.offload_policy
+            )
+        
         if self.should_load_pre_trained_weights:
             self.load_pre_trained_weights()
-
-        if self.is_using_fsdp:
-            state_dict = None
-            if (
-                self.global_rank == 0
-                and self.should_load_pre_trained_weights
-            ):
-                with self.get_pre_trained_weights_context():
-                    state_dict = self.get_pre_trained_weights()
-
-            self.on_fsdp_wrap_model(state_dict)
-            
-            del state_dict
-            gc.collect()
-
-            self.configure_gradient_clipping = self._fsdp_configure_gradient_clipping
     
     def _wrap_configure_model(self, configure_model: Callable[P, R]) -> Callable[P, R]:
         @wraps(configure_model)
@@ -282,7 +227,10 @@ class BaseLightningModule(LightningModule):
                 configure_model()
             
             self.on_after_configure_model()
-        
+
+            if self.strategy is not None:
+                self.strategy.barrier()
+
         return wrapped_configure_model
     
     def configure_optimizers(self):
@@ -305,18 +253,6 @@ class BaseLightningModule(LightningModule):
                 'interval': 'step'
             }
         }
-
-    def _fsdp_configure_gradient_clipping(
-        self,
-        optimizer: Optimizer,
-        gradient_clip_val: int | float | None = None,
-        gradient_clip_algorithm: str | None = None
-    ) -> None:
-        assert gradient_clip_algorithm in ('norm', None), gradient_clip_algorithm
-        self._grad_norm = self._fsdp_module.clip_grad_norm_(gradient_clip_val).item()
-
-    def get_model(self) -> BaseModel:
-        raise NotImplementedError()
 
     @property
     def required_keys(self) -> set[str]:

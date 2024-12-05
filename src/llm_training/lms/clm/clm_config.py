@@ -6,3 +6,4 @@ class CLMConfig(BaseLightningModuleConfig):
     model: ModelType
     ignore_index: int = -100
     neftune_alpha: float | None = None
+    log_perplexity: bool = True

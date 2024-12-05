@@ -1,19 +1,18 @@
-import logging
-
 import torch
 import torch.distributed
 from torch import nn
 from transformers import (AutoConfig, AutoModelForCausalLM,
                           modeling_flash_attention_utils)
+from transformers.modeling_utils import no_init_weights
 
 from llm_training.models.hf_compat_model import HFCompatModel
+from llm_training.models.utils.modeling_outputs import CausalLMOutput
 from llm_training.ops.attention_op import _get_unpad_data
 from llm_training.utils.decorators import copy_method_signature
 
 from .hf_causal_lm_config import HFCausalLMConfig
 
-
-# Patch for packed attention masks
+# Patch for packed attention masks (FA only)
 modeling_flash_attention_utils._get_unpad_data = _get_unpad_data
 
 class HFCausalLM(HFCompatModel):
@@ -21,7 +20,13 @@ class HFCausalLM(HFCompatModel):
 
     config_class = HFCausalLMConfig
     hf_config_class = AutoConfig
-    hf_model_class = AutoModelForCausalLM
+
+    @property
+    def hf_model_class(self) -> type[AutoModelForCausalLM]:
+        if self.config.enable_liger_kernel:
+            from liger_kernel.transformers import AutoLigerKernelForCausalLM
+            return AutoLigerKernelForCausalLM
+        return AutoModelForCausalLM
 
     @property
     def no_split_modules(self) -> list[str] | None:
@@ -30,7 +35,10 @@ class HFCausalLM(HFCompatModel):
     def __init__(self, config: HFCausalLMConfig) -> None:
         super().__init__(config)
 
-        self.hf_model = self.construct_hf_model()
+        self.config.hf_config = self.hf_config
+
+        with no_init_weights(not self._init_weights):
+            self.hf_model = self.construct_hf_model()
 
         if self.config.enable_gradient_checkpointing:
             self.hf_model.gradient_checkpointing_enable({'use_reentrant': False})
@@ -46,14 +54,25 @@ class HFCausalLM(HFCompatModel):
         input_ids: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
-        inputs_embeds: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        return self.hf_model(
+        inputs_embeds: torch.Tensor | None = None,
+        return_last_hidden_states: bool = False
+    ) -> CausalLMOutput:
+        outputs = self.hf_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            inputs_embeds=inputs_embeds
-        ).logits
+            inputs_embeds=inputs_embeds,
+            output_hidden_states=return_last_hidden_states
+        )
+
+        last_hidden_states = None
+        if return_last_hidden_states:
+            last_hidden_states = outputs.hidden_states[-1]
+
+        return CausalLMOutput(
+            logits=outputs.logits,
+            last_hidden_states=last_hidden_states
+        )
 
     @copy_method_signature(forward)
     def __call__(): ...

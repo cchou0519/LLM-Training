@@ -28,5 +28,6 @@ class DummyDataset(Dataset):
         return dict(
             input_ids=input_ids,
             attention_mask=torch.ones_like(input_ids),
+            position_ids=torch.arange(input_ids.size(0)),
             labels=input_ids
         )

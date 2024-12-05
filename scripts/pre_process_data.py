@@ -3,8 +3,8 @@ import sys
 from typing import TextIO
 
 from llm_training.data import *
+from llm_training.lightning.cli import *
 from llm_training.models import *
-from llm_training.overrides.cli import *
 
 
 class OutputStreamRedirector:

@@ -29,7 +29,7 @@ Alternatively, you can set the `mode` of WandbLogger to `disabled` to disable it
 ```yaml
 ...
   logger:
-    class_path: llm_training.overrides.wandb.WandbLogger
+    class_path: llm_training.lightning.WandbLogger
     init_args:
       ...
       mode: disabled
