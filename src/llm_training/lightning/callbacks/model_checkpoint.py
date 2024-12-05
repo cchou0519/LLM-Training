@@ -5,7 +5,7 @@ from lightning import LightningModule, Trainer
 from lightning.pytorch.callbacks.model_checkpoint import \
     ModelCheckpoint as LightningModelCheckpoint
 
-from llm_training.lightning import WandbLogger
+from llm_training.lightning.loggers.wandb import WandbLogger
 
 logger = logging.getLogger(__name__)
 

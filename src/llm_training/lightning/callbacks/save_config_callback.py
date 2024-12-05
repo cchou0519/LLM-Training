@@ -6,7 +6,7 @@ import yaml
 from lightning import LightningModule, Trainer
 from lightning.pytorch.cli import SaveConfigCallback as _SaveConfigCallback
 
-from llm_training.lightning import WandbLogger
+from llm_training.lightning.loggers.wandb import WandbLogger
 
 
 class SaveConfigCallback(_SaveConfigCallback):
