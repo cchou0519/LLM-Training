@@ -7,9 +7,6 @@ from lightning.pytorch import Trainer as _Trainer
 from lightning.pytorch.cli import ArgsType, LightningArgumentParser
 from lightning.pytorch.cli import LightningCLI as _LightningCLI
 from lightning.pytorch.cli import SaveConfigCallback as _SaveConfigCallback
-from lightning.pytorch.plugins.environments import (ClusterEnvironment,
-                                                    LightningEnvironment,
-                                                    SLURMEnvironment)
 
 from llm_training.lightning import (ExtraConfig, OutputRedirection,
                                     SaveConfigCallback, TQDMProgressBar)
