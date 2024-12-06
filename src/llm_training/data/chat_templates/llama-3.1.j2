@@ -82,7 +82,7 @@
         {%- if builtin_tools is defined and tool_call.name in builtin_tools %}
             {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
             {% generation %}
-            {{- "<|python_tag|>" + tool_call.name + ".call(" -}}
+                {{- "<|python_tag|>" + tool_call.name + ".call(" -}}
             {% endgeneration %}
             {%- for arg_name, arg_val in tool_call.arguments | items %}
                 {{- arg_name + '="' + arg_val + '"' }}
@@ -94,19 +94,19 @@
         {%- else  %}
             {{- '<|start_header_id|>assistant<|end_header_id|>\n\n' -}}
             {% generation %}
-            {{- '{"name": "' + tool_call.name + '", ' }}
-            {{- '"parameters": ' }}
-            {{- tool_call.arguments | tojson }}
-            {{- "}" -}}
+                {{- '{"name": "' + tool_call.name + '", ' }}
+                {{- '"parameters": ' }}
+                {{- tool_call.arguments | tojson }}
+                {{- "}" -}}
             {% endgeneration %}
         {%- endif %}
         {% generation %}
-        {%- if builtin_tools is defined %}
-            {#- This means we're in ipython mode #}
-            {{- "<|eom_id|>" }}
-        {%- else %}
-            {{- "<|eot_id|>" }}
-        {%- endif %}
+            {%- if builtin_tools is defined %}
+                {#- This means we're in ipython mode #}
+                {{- "<|eom_id|>" }}
+            {%- else %}
+                {{- "<|eot_id|>" }}
+            {%- endif -%}
         {% endgeneration %}
     {%- elif message.role == "tool" or message.role == "ipython" %}
         {{- "<|start_header_id|>ipython<|end_header_id|>\n\n" }}
