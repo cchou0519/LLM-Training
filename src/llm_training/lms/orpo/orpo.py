@@ -189,7 +189,10 @@ class ORPO(BaseLightningModule):
 
     def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         max_seq_len = max(batch['chosen_input_ids'].size(1), batch['rejected_input_ids'].size(1))
-        if max_seq_len >= self.config.empty_cache_threshold:
+        if (
+            self.config.empty_cache_threshold is not None
+            and max_seq_len >= self.config.empty_cache_threshold
+        ):
             gc.collect()
             torch.cuda.empty_cache()
 
