@@ -7,7 +7,6 @@ trainer:
     class_path: llm_training.lightning.DeepSpeedStrategy
     init_args:
       stage: 2
-      exclude_frozen_parameters: true
   precision: bf16-true
   logger:
     class_path: llm_training.lightning.WandbLogger
@@ -29,7 +28,7 @@ trainer:
         save_top_k: 1
 
 model:
-  class_path: llm_training.lms.DPO
+  class_path: llm_training.lms.ORPO
   init_args.config:
     model:
       model_class: llm_training.models.Phi3
