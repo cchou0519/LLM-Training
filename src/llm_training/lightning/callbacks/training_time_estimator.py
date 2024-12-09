@@ -6,7 +6,7 @@ from lightning.pytorch.callbacks import Callback
 from torch import Tensor
 
 
-class TrainingTimeCallback(Callback):
+class TrainingTimeEstimator(Callback):
     def __init__(
         self,
         num_test_steps: int,
