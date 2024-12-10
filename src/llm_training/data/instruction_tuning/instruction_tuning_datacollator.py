@@ -40,9 +40,9 @@ class InstructionTuningDataCollator(BaseDataCollator):
         for x in batch:
             input_ids = x['input_ids']
             labels = x['labels']
+            n = len(input_ids)
 
             if self.config.packing_method == PackingMethod.NO_PACKING:
-                n = len(input_ids)
                 position_ids = list(range(n))
                 attention_mask = [1] * n
             elif self.config.packing_method == PackingMethod.GROUP_BY_LENGTH:
