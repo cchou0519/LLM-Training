@@ -53,6 +53,9 @@ See [train.sh](scripts/train.sh) for sbatch script template.
 python scripts/convert_to_hf.py <CKPT_PATH> <OUTPUT_PATH>
 ```
 
+Note that `<CKPT_PATH>` could either be a file or a folder, depending on the parallelization strategy you are using.
+By default, its name will follow this format: `epoch=xxx-step=yyy.ckpt`.
+
 ### Examples
 
 - [Continue Training Phi-3](docs/phi-3_example.md)
