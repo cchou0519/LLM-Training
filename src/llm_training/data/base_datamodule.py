@@ -57,7 +57,7 @@ class BaseDataModule(L.LightningDataModule):
         def print_header(header: str) -> None:
             n = shutil.get_terminal_size().columns
             m = (n - len(header) - 2) // 2
-            divider = '―' * m
+            divider = '─' * m
             header = f'{divider} {header} {divider}'
             print_(f'{header:^{n}}', end='\n\n')
         

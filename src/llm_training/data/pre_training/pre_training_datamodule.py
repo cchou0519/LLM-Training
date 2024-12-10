@@ -346,7 +346,7 @@ class PreTrainingDataModule(HFBasedDataModule):
     def print_dataset_info(self, file: str | None) -> None:
         super().print_dataset_info(file)
         print_ = partial(print, file=file)
-        print_('―' * shutil.get_terminal_size().columns, end='\n\n')
+        print_('─' * shutil.get_terminal_size().columns, end='\n\n')
         
         logger.info('Counting Original Tokens')
         original_token_table = self._get_tokens_table(self.pre_processed_dataset_dict)
