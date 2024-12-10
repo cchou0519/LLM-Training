@@ -254,7 +254,7 @@ class PreTrainingDataModule(HFBasedDataModule):
             num_proc=self.config.num_proc,
             features=Features({
                 'source': Value('string'),
-                'input_ids': Sequence(Value('uint32')),
+                'input_ids': Sequence(Value('int32')),
                 'attention_mask': Sequence(Value('uint16')),
                 'length': Value('uint32')
             }),

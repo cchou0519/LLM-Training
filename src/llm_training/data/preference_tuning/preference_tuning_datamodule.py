@@ -1,5 +1,6 @@
 from typing import Any
 
+from datasets import Features, Sequence, Value
 from transformers import PreTrainedTokenizerBase
 
 from llm_training.data.hf_based.hf_based_datamodule import (DatasetDict,
@@ -120,6 +121,14 @@ class PreferenceTuningDataModule(HFBasedDataModule):
             batched=True,
             remove_columns=True,
             num_proc=self.config.num_proc,
+            features=Features({
+                'chosen_input_ids': Sequence(Value('int32')),
+                'chosen_labels': Sequence(Value('int32')),
+                'chosen_length': Value('uint32'),
+                'rejected_input_ids': Sequence(Value('int32')),
+                'rejected_labels': Sequence(Value('int32')),
+                'rejected_length': Value('uint32')
+            }),
             desc='Pre-processing data'
         )    
         return dataset_dict

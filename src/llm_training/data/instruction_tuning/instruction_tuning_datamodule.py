@@ -168,9 +168,9 @@ class InstructionTuningDataModule(HFBasedDataModule):
             remove_columns=True,
             num_proc=self.config.num_proc,
             features=Features({
-                'input_ids': Sequence(Value('uint32')),
+                'input_ids': Sequence(Value('int32')),
                 'attention_mask': Sequence(Value('uint16')),
-                'labels': Sequence(Value('uint32')),
+                'labels': Sequence(Value('int32')),
                 'length': Value('uint32')
             }),
             desc='Pre-processing data'
