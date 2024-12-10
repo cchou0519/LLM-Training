@@ -64,7 +64,7 @@ data:
     add_default_system_prompt_rate: 0.0
     default_system_prompt: ""
     chat_template: phi-3
-    concat_method: GROUP_BY_LENGTH
+    packing_method: GROUP_BY_LENGTH
     max_length: 4096
     pad_to_multiple_of: 64
     validation_split: null
