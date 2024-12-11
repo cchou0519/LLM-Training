@@ -30,6 +30,7 @@ class InstructionTuningDataModule(HFBasedDataModule):
     ):
         new_batch = {
             'input_ids': [],
+            'attention_mask': [],
             'labels': [],
             'length': []
         }
@@ -62,6 +63,7 @@ class InstructionTuningDataModule(HFBasedDataModule):
         ):
             labels = [i if a == 1 else -100 for i, a in zip(input_ids, assistant_masks)]
             new_batch['input_ids'].append(input_ids)
+            new_batch['attention_mask'].append([1] * len(input_ids))
             new_batch['labels'].append(labels)
             new_batch['length'].append(len(input_ids))
 
