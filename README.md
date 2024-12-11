@@ -1,3 +1,7 @@
+> [!WARNING]
+> I plan to transfer this repository to my personal GitHub and make it public soon.
+> At that time, you may need to reset the git origin, and this repository may be cleared and archived.
+
 # LLM Training
 
 A LLM training framework powered by Lightning.
@@ -7,6 +11,15 @@ A LLM training framework powered by Lightning.
 It is recommended to use [conda](https://github.com/conda/conda)/[mamba](https://github.com/mamba-org/mamba) for environment management.
 
 ```bash
+# Clone this repository
+git clone https://github.com/EduTAIDE/LLM-Training.git && cd LLM-Training
+
+# Optional: Choose the version of LLM Training
+# By default, the main branch is used, which includes the latest features and changes but may come with instability.
+# Alternatively, you can switch to a specific release from the release page for more stability.
+# In most cases, using the latest release is recommended.
+git checkout vX.X.X
+
 # Create conda environment
 conda env create -f environment.yaml
 # or
@@ -20,6 +33,12 @@ conda activate llm-training
 ```
 
 ## Usage
+
+> [!TIP]
+> The current documentation is not very comprehensive, as I haven’t had enough time to write it.
+> I can only provide brief usage examples, but many details and customizable parameters are not listed or explained in full.
+> As a result, you may need to refer to the source code to understand the purpose and usage of some parameters.
+> If this does not meet your expectations, you might want to consider using other open-source training frameworks, as there are likely many available in the community.
 
 ### Config
 
@@ -56,6 +75,16 @@ python scripts/convert_to_hf.py <CKPT_PATH> <OUTPUT_PATH>
 Note that `<CKPT_PATH>` could either be a file or a folder, depending on the parallelization strategy you are using.
 By default, its name will follow this format: `epoch=xxx-step=yyy.ckpt`.
 
-### Examples
+## Issues
 
-- [Continue Training Phi-3](docs/phi-3_example.md)
+If you encounter any issue while using this framework, please avoid directly contacting the author.
+Instead, consider submitting an issue on the repository.
+This makes it easier to manage and address errors while also serving as a reference for others who may face the same problem in the future.
+
+Currently, there is no specific format for submitting an Issue. However, when reporting a problem, please provide as much relevant information as possible, such as:
+
+- The version or commit ID of LLM-Training you are using
+- The training config file
+- The full error message
+
+This will help ensure the issue can be resolved more efficiently.
