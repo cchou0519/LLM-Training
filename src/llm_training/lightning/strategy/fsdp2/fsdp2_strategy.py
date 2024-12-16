@@ -134,13 +134,16 @@ class FSDP2Strategy(ParallelStrategy):
     @property
     def num_processes(self) -> int:
         return len(self.parallel_devices) if self.parallel_devices is not None else 0
+    
+    @property
+    def is_distributed(self) -> bool:
+        return True
 
     @property
     @override
-    def distributed_sampler_kwargs(self) -> Dict[str, Any]:
+    def distributed_sampler_kwargs(self) -> dict[str, Any]:
         assert self.device_mesh is not None
-        data_parallel_mesh = self.device_mesh['data_parallel']
-        return {'num_replicas': data_parallel_mesh.size(), 'rank': data_parallel_mesh.get_local_rank()}
+        return {'num_replicas': self.dp_size, 'rank': self.dp_rank}
 
     @property
     def process_group_backend(self) -> Optional[str]:
