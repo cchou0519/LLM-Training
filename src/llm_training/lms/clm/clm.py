@@ -5,6 +5,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.parallel import loss_parallel
 from torchmetrics.text import Perplexity
 
@@ -57,15 +58,26 @@ class CLM(BaseLightningModule):
             if attention_mask is None:
                 attention_mask = torch.ones_like(input)
                 
-            # packed attention mask
+            # For packed attention mask
             attention_mask = attention_mask.bool().to(output.dtype)
-
-            noise = torch.zeros_like(output).uniform_(-1, 1)
+            
+            noise = torch.empty(
+                output.shape,
+                dtype=output.dtype,
+                device=output.device
+            )
+            noise = noise.uniform_(-1, 1)
             input_lengths = attention_mask.sum(1)
             delta = noise * attention_mask.unsqueeze(2)
             dims = input_lengths * output.size(-1)
             magnitude = self.config.neftune_alpha / torch.sqrt(dims)
             delta = (delta * magnitude.view(-1, 1, 1)).detach()
+            if isinstance(output, DTensor):
+                delta = DTensor.from_local(
+                    delta,
+                    device_mesh=output.device_mesh,
+                    placements=output.placements
+                )
             output = output + delta
         return output
     
