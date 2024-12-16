@@ -1,4 +1,5 @@
-from functools import wraps
+from functools import partial, wraps
+
 import torch
 from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed.tensor.parallel import (ColwiseParallel,
@@ -14,7 +15,6 @@ from transformers.models.llama.modeling_llama import (LlamaConfig,
 from llm_training.ops.attention_op import prepare_packed_4d_causal_mask
 
 from .hf_causal_lm import HFCausalLM
-
 
 
 class HFLlamaCausalLM(HFCausalLM):
@@ -76,14 +76,25 @@ class HFLlamaCausalLM(HFCausalLM):
         if dp_mesh.size() == 1:
             return
         
+        fully_shard_ = partial(
+            fully_shard,
+            mesh=dp_mesh,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+            offload_policy=offload_policy
+        )
+
+        # shard the entire model to support gradient clipping.
+        # see the following issues:
+        # https://github.com/pytorch/pytorch/issues/121020
+        # https://github.com/pytorch/pytorch/issues/134212
+        
+        fully_shard_(self.hf_model.model.embed_tokens)
+        fully_shard_(self.hf_model.model.norm)
+        fully_shard_(self.hf_model.lm_head)
+        
         for layer in self.hf_model.model.layers:
-            fully_shard(
-                layer,
-                mesh=dp_mesh,
-                reshard_after_forward=reshard_after_forward,
-                mp_policy=mp_policy,
-                offload_policy=offload_policy
-            )
+            fully_shard_(layer)
 
 
 def _patch_packed_attention_mask_for_sdpa() -> None:
