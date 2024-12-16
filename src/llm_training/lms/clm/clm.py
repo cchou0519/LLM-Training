@@ -76,7 +76,8 @@ class CLM(BaseLightningModule):
                 delta = DTensor.from_local(
                     delta,
                     device_mesh=output.device_mesh,
-                    placements=output.placements
+                    placements=output.placements,
+                    run_check=False
                 )
             output = output + delta
         return output

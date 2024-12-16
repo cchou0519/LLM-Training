@@ -171,7 +171,8 @@ class ORPO(BaseLightningModule):
             or_loss = DTensor.from_local(
                 or_loss,
                 ce_loss.device_mesh,
-                ce_loss.placements
+                ce_loss.placements,
+                run_check=False
             )
 
         return or_loss + ce_loss
