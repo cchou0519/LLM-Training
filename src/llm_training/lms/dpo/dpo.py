@@ -53,24 +53,8 @@ class DPO(BaseLightningModule):
             logger.info(f'Model:\n{self.model}')
             logger.info(f'Reference Model:\n{self.ref_model}')
 
-    def on_fsdp_wrap_model(self, state_dict: dict[str, torch.Tensor] | None) -> None:
-        assert self.model.no_split_modules
-        assert self.ref_model.no_split_modules
-
-        self.model = self.fsdp_wrap_model(
-            self.model,
-            'model',
-            state_dict,
-            self.model.no_split_modules
-        )
-        
-        self.ref_model = self.fsdp_wrap_model(
-            self.ref_model,
-            'ref_model',
-            state_dict,
-            self.ref_model.no_split_modules,
-            training=False
-        )
+    def on_fsdp_parallelize_model(self, **kwargs) -> None:
+        self.model.parallelize(**kwargs)
     
     def compute_loss(
         self,
