@@ -212,9 +212,6 @@ class ORPO(BaseLightningModule):
 
         self.log('loss', loss, prog_bar=True, logger=False)
 
-        if self.grad_norm is not None:
-            metrics['Gradient Norm'] = self.grad_norm
-        
         metrics = self.add_suffix_to_metrics(metrics, '/Train/Step')
         self.log_dict(metrics)
         return loss

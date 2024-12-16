@@ -3,7 +3,7 @@ import logging
 import re
 from contextlib import contextmanager
 from functools import wraps
-from typing import Callable, ContextManager, ParamSpec, TypeVar
+from typing import Any, Callable, ContextManager, ParamSpec, TypeVar
 
 import safetensors.torch
 import torch
@@ -11,9 +11,11 @@ import torch.distributed
 import torch.utils.checkpoint
 from accelerate import init_empty_weights
 from lightning import LightningModule, Trainer
+from lightning.pytorch.core.optimizer import LightningOptimizer
 from lightning.pytorch.strategies import Strategy
 from torch import nn
 from torch.distributed.tensor import DTensor, distribute_tensor
+from torch.optim.optimizer import Optimizer
 from tqdm.auto import tqdm
 
 from llm_training.lightning import DeepSpeedStrategy, FSDP2Strategy
@@ -92,8 +94,6 @@ class BaseLightningModule(LightningModule):
 
     @property
     def grad_norm(self) -> torch.Tensor | float | None:
-        if isinstance(self.strategy, DeepSpeedStrategy):
-            return self.strategy.deepspeed_engine.get_global_grad_norm()
         return self._grad_norm
 
     def get_pre_trained_weights(self) -> dict[str, torch.Tensor]:
@@ -253,6 +253,18 @@ class BaseLightningModule(LightningModule):
                 'interval': 'step'
             }
         }
+    
+    def optimizer_step(
+        self,
+        epoch: int,
+        batch_idx: int,
+        optimizer: Optimizer | LightningOptimizer,
+        optimizer_closure: Callable[[], Any] | None = None
+    ) -> None:
+        super().optimizer_step(epoch, batch_idx, optimizer, optimizer_closure)
+        
+        if self.config.log_grad_norm and self.grad_norm is not None:
+            self.log('Gradient Norm', self.grad_norm)
 
     @property
     def required_keys(self) -> set[str]:

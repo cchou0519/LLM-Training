@@ -148,9 +148,6 @@ class CLM(BaseLightningModule):
         self.log('loss', loss, prog_bar=True, logger=False)
         self.log('Loss/Train/Step', loss)
 
-        if self.grad_norm is not None:
-            self.log('Gradient Norm', self.grad_norm)
-
         self.consumed_samples.update(labels)
         self.consumed_tokens.update(labels)
         self.logger.log_metrics({

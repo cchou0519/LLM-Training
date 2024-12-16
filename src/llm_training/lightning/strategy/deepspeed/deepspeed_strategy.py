@@ -135,9 +135,15 @@ class DeepSpeedStrategy(_DeepSpeedStrategy):
         progress_bar_metrics['skipped_steps'] = self.deepspeed_engine.skipped_steps
 
     def training_step(self, *args: Any, **kwargs: Any) -> STEP_OUTPUT:
-        o = super().training_step(*args, **kwargs)
+        self.lightning_module._grad_norm = None
+        output = super().training_step(*args, **kwargs)
         self._maybe_add_skipped_steps_to_progress_bar()
-        return o
+        return output
+    
+    def optimizer_step(self, optimizer, closure, model = None, **kwargs):
+        output = super().optimizer_step(optimizer, closure, model, **kwargs)
+        self.lightning_module._grad_norm = self.deepspeed_engine.get_global_grad_norm()
+        return output
 
     def save_checkpoint(self, checkpoint: dict, filepath: _PATH, storage_options: Any | None = None) -> None:
         filepath = self.broadcast(filepath)

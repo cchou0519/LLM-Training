@@ -120,7 +120,7 @@ class DPO(BaseLightningModule):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: torch.Tensor
-    ):
+    ) -> torch.Tensor:
         logits = model(
             input_ids=input_ids,
             attention_mask=attention_mask
@@ -181,9 +181,6 @@ class DPO(BaseLightningModule):
 
         self.log('loss', loss, prog_bar=True, logger=False)
         self.log('Loss/Train/Step', loss)
-
-        if self.grad_norm is not None:
-            self.log('Gradient Norm', self.grad_norm)
 
         metrics = self.compute_metrics(
             policy_chosen_logps,
