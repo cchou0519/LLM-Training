@@ -267,6 +267,15 @@ class FSDP2Strategy(ParallelStrategy):
 
     def _determine_device_ids(self) -> List[int]:
         return [self.root_device.index]
+    
+    def training_step(self, *args, **kwargs):
+        self.lightning_module._grad_norm = None
+        return super().training_step(*args, **kwargs)
+    
+    def optimizer_step(self, optimizer, closure, model = None, **kwargs):
+        output = super().optimizer_step(optimizer, closure, model, **kwargs)
+        self.lightning_module._grad_norm = self.precision_plugin._grad_norm
+        return output
 
     @override
     def teardown(self) -> None:

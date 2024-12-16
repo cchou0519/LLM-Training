@@ -49,6 +49,7 @@ class FSDP2Precision(Precision):
             '32-true': torch.float32
         }
         self._desired_input_dtype = precision_to_type[self.precision]
+        self._grad_norm = None
 
     @property
     def mp_policy(self) -> "MixedPrecisionPolicy":
@@ -147,6 +148,11 @@ class FSDP2Precision(Precision):
             return step_output
         
         return closure_result
+    
+    @override
+    def clip_grad_by_norm(self, optimizer, clip_val):
+        parameters = self.main_params(optimizer)
+        self._grad_norm = torch.nn.utils.clip_grad_norm_(parameters, clip_val)
     
     @override
     def clip_gradients(
