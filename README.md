@@ -8,7 +8,7 @@ It is recommended to use [conda](https://github.com/conda/conda)/[mamba](https:/
 
 ```bash
 # Clone this repository
-git clone https://github.com/EduTAIDE/LLM-Training.git && cd LLM-Training
+git clone https://github.com/ShinoharaHare/LLM-Training.git && cd LLM-Training
 
 # Optional: Choose the version of LLM Training
 # By default, the main branch is used, which includes the latest features and changes but may come with instability.
