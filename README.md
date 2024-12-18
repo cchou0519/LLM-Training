@@ -1,7 +1,3 @@
-> [!WARNING]
-> I plan to transfer this repository to my personal GitHub and make it public soon.
-> At that time, you may need to reset the git origin, and this repository may be cleared and archived.
-
 # LLM Training
 
 A LLM training framework powered by Lightning.
