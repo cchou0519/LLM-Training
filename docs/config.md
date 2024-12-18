@@ -31,7 +31,7 @@ This part controls model-related parameters, such as model architecture, pre-tra
 
 First, you need to set the `class_path` to determine which model class to use.
 
-Next, you can use init_args to set initialization parameters.
+Next, you can use `init_args` to set initialization parameters.
 
 Specific parameters that can be set depend on the chosen model class.
 
