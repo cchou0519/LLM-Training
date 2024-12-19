@@ -155,17 +155,22 @@ class BaseLightningModule(LightningModule):
 
         with self._get_weight_loading_progress_bar() as progress_bar:
             for n, p in self.named_parameters():
-                w = torch.empty(p.shape, dtype=p.dtype, device=device)
-
-                if self.global_rank == 0:
-                    w.copy_(state_dict[n])
-
-                torch.distributed.broadcast(w, src=0)
-
                 if isinstance(p, DTensor):
-                    w = distribute_tensor(w, p.device_mesh, p.placements)               
-
-                p.data.copy_(w)
+                    w = (
+                        state_dict[n] if self.global_rank == 0
+                        else torch.empty(p.shape, dtype=p.dtype, device=device)
+                    )
+                    w = distribute_tensor(
+                        w,
+                        p.device_mesh,
+                        p.placements
+                    )
+                    p.data.copy_(w)
+                else:
+                    if self.global_rank == 0:
+                        p.data.copy_(state_dict[n])
+                    
+                    torch.distributed.broadcast(p.data, src=0)
 
                 progress_bar.set_postfix_str(n)
                 progress_bar.update()
