@@ -46,4 +46,4 @@ class SaveConfigCallback(_SaveConfigCallback):
 
 def _wandb_code_include_fn(path: str, root: str):
     p = Path(path).relative_to(root)
-    return p.parts[0] in ['src', 'scripts', 'shell_scripts'] and p.suffix in ['.py', '.sh']
+    return p.parts[0] in ['src', 'scripts'] and p.suffix in ['.py', '.sh']
