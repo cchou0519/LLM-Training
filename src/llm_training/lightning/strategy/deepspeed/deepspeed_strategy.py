@@ -1,4 +1,5 @@
 import logging
+from functools import partial
 from typing import Any, Dict, List
 
 import lightning as L
@@ -146,19 +147,10 @@ class DeepSpeedStrategy(_DeepSpeedStrategy):
         return output
 
     def save_checkpoint(self, checkpoint: dict, filepath: _PATH, storage_options: Any | None = None) -> None:
-        filepath = self.broadcast(filepath)
-
-        if storage_options is not None:
-            raise TypeError(
-                '`Trainer.save_checkpoint(..., storage_options=...)` with `storage_options` arg'
-                f' is not supported for `{self.__class__.__name__}` as `CheckpointIO` is not used.'
-            )
-        
-        _exclude_keys = ['state_dict', 'optimizer_states']
-        checkpoint = {k: v for k, v in checkpoint.items() if k not in _exclude_keys}
-        self.deepspeed_engine.save_checkpoint(
-            filepath,
-            client_state=checkpoint,
-            tag='checkpoint',
+        save_checkpoint = self.deepspeed_engine.save_checkpoint
+        self.deepspeed_engine.save_checkpoint = partial(
+            save_checkpoint,
             exclude_frozen_parameters=self.exclude_frozen_parameters
         )
+        super().save_checkpoint(checkpoint, filepath, storage_options)
+        self.deepspeed_engine.save_checkpoint = save_checkpoint
