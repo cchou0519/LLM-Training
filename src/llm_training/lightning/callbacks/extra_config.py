@@ -1,10 +1,9 @@
 import logging
 import os
 from typing import Literal
-from uuid import uuid4
 
-from lightning import LightningModule, Trainer
 import torch
+from lightning import LightningModule, Trainer
 from lightning.pytorch.callbacks.callback import Callback
 from triton.runtime.cache import default_cache_dir
 
