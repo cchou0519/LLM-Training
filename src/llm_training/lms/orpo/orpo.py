@@ -21,7 +21,7 @@ from .orpo_config import ORPOConfig
 
 
 @dataclass
-class ForwardOutput:
+class _ForwardOutput:
     chosen_logits: torch.Tensor
     chosen_logps: torch.Tensor
     chosen_labels: torch.Tensor
@@ -67,7 +67,7 @@ class ORPO(BaseLightningModule):
         
         if isinstance(logits, DTensor):
             with loss_parallel():
-                logps = logits.log_softmax(2)
+                logps: DTensor = logits.log_softmax(2)
 
             local_logps = logps.to_local()
             local_vocab_size = local_logps.size(-1)
@@ -92,7 +92,7 @@ class ORPO(BaseLightningModule):
 
         return per_token_logps.sum(-1) / label_mask.sum(-1)
 
-    def forward_batch(self, batch: dict[str, torch.Tensor | Any]) -> ForwardOutput:
+    def forward_batch(self, batch: dict[str, torch.Tensor | Any]) -> _ForwardOutput:
         chosen_labels = shift_labels(batch['chosen_labels'], self.config.ignore_index)
         rejected_labels = shift_labels(batch['rejected_labels'], self.config.ignore_index)
 
@@ -100,7 +100,7 @@ class ORPO(BaseLightningModule):
             input_ids=batch['chosen_input_ids'],
             attention_mask=batch['chosen_attention_mask'],
             position_ids=batch['chosen_position_ids']
-        ).logits            
+        ).logits
 
         rejected_logits = self.model(
             input_ids=batch['rejected_input_ids'],
@@ -111,7 +111,7 @@ class ORPO(BaseLightningModule):
         chosen_logps = self.get_logps(chosen_logits, chosen_labels)
         rejected_logps = self.get_logps(rejected_logits, rejected_labels)
 
-        return ForwardOutput(
+        return _ForwardOutput(
             chosen_logits=chosen_logits,
             chosen_logps=chosen_logps,
             chosen_labels=chosen_labels,
@@ -234,7 +234,7 @@ class ORPO(BaseLightningModule):
         )
         metrics['Loss'] = loss
         metrics = self.add_suffix_to_metrics(metrics, '/Val')
-        self.log_dict(metrics, batch_size=batch_size, sync_dist=True)
+        self.log_dict(metrics, sync_dist=True, batch_size=batch_size)
 
     def get_model(self) -> BaseModel:
         return self.model
