@@ -38,9 +38,9 @@ class ExtraConfig(Callback):
         logging.getLogger('llm_training').setLevel(logging_level)
         logging.getLogger('lightning').setLevel(logging_level)
 
-    def _configure_triton_cache_dir(self) -> None:
+    def _configure_triton_cache_dir(self, rank: int) -> None:
         if not os.getenv('TRITON_CACHE_DIR', '').strip():
-            os.environ['TRITON_CACHE_DIR'] = os.path.join(default_cache_dir(), str(uuid4()))
+            os.environ['TRITON_CACHE_DIR'] = os.path.join(default_cache_dir(), 'llm_training', f'rank_{rank}')
 
     def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str):
-        self._configure_triton_cache_dir()
+        self._configure_triton_cache_dir(trainer.global_rank)
