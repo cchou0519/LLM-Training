@@ -22,6 +22,7 @@ class BaseOptimizerConfig(PyDanticBaseModel):
 class BaseLightningModuleConfig(PyDanticBaseModel):
     init_weights: bool = False
     load_weights: bool = True
+    pre_trained_weights: str | None = None
     optim: BaseOptimizerConfig | None = None
     frozen_modules: list[str] | None = None
     log_grad_norm: bool = True
