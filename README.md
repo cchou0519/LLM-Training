@@ -1,6 +1,45 @@
 # LLM Training
 
-A LLM training framework powered by Lightning.
+A distributed training framework for large language models powered by Lightning.
+
+## Supported Training Methods
+
+| Method             | Full Training      | Tensor Parallelism |
+| ------------------ | ------------------ | ------------------ |
+| Pre-training       | :white_check_mark: | :white_check_mark: |
+| Instruction Tuning | :white_check_mark: | :white_check_mark: |
+| DPO                | :white_check_mark: | :white_check_mark: |
+| ORPO               | :white_check_mark: | :white_check_mark: |
+
+### Pre-training
+
+- Supports Best-fit Bin Packing for less truncation.
+- Supports dynamic data sampling via configs, allowing flexible control of data sampling from multiple sources.
+
+### Instruction Tuning
+
+- Supports data packing.
+- Supports NEFTune.
+
+## Supported Models
+
+All GPT-like models supported by HuggingFace are compatible.
+However, only text models are supported currently.
+
+Besides, alternative implementations that support additional features for specific model architectures are available.
+
+| Architecture | Selective Activation Checkpointing | Liger Kernel       | Tensor Parallelism | Sequence Parallelism |
+| ------------ | ---------------------------------- | ------------------ | ------------------ | -------------------- |
+| LLaMA        | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
+| Phi-3        | :white_check_mark:                 | :white_check_mark: | :x:                | :x:                  |
+
+## Known Problems
+- :white_check_mark: [Cross-contamination Attention](https://github.com/MeetKai/functionary/tree/main/functionary/train/packing)
+  - Fixed for FA2
+  - Fixed for SDPA (LLaMA only)
+- :x: [Faulty Gradient Accumulation](https://unsloth.ai/blog/gradient)
+  - Not fixed yet
+  - There should be similar problems in distributed training
 
 ## Installation
 
