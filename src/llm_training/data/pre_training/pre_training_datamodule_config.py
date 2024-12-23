@@ -8,7 +8,7 @@ from llm_training.utils.str_enum import StrEnum
 
 
 class PackingMethod(StrEnum):
-    NO_CONCAT = auto()
+    NO_PACKING = auto()
     NAIVE_PACKING = auto()
     BEST_FIT_BIN_PACKING = auto()
 
