@@ -1,6 +1,8 @@
 from typing import Any
 
+import tokenizers
 from datasets import Features, Sequence, Value
+from packaging.version import Version
 from transformers import PreTrainedTokenizerBase
 
 from llm_training.data.hf_based.hf_based_datamodule import (DatasetDict,
@@ -17,6 +19,12 @@ class PreferenceTuningDataModule(HFBasedDataModule):
 
     def __init__(self, config: PreferenceTuningDataModuleConfig) -> None:
         super().__init__(config)
+
+        if Version(tokenizers.__version__) < Version('0.20.1'):
+            raise ValueError(
+                "`tokenizers` must be at least version 0.20.1, "
+                "otherwise LLaMA 3 tokenizer will produce incorrect prompt/response mask."
+            )
 
     @classmethod
     def _apply_chat_template_and_tokenize(
