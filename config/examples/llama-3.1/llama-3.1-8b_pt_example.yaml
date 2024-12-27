@@ -1,0 +1,69 @@
+seed_everything: 42
+float32_matmul_precision: medium
+logging_level: DEBUG
+
+trainer:
+  strategy: 
+    class_path: llm_training.lightning.DeepSpeedStrategy
+    init_args:
+      stage: 2
+  precision: bf16-true
+  logger:
+    class_path: llm_training.lightning.WandbLogger
+    init_args:
+      name: llama-3.1-8b_pt_example
+      job_type: example
+      project: llm-training
+      save_dir: logs
+      save_code: true
+  max_epochs: 1
+  val_check_interval: null
+  accumulate_grad_batches: 1
+  gradient_clip_val: 1.0
+  callbacks:
+    - class_path: LearningRateMonitor
+    - class_path: llm_training.lightning.ModelCheckpoint
+      init_args:
+        save_on_train_epoch_end: true
+        save_top_k: -1
+    - class_path: llm_training.lightning.ModelCheckpoint
+      init_args:
+        save_top_k: 1
+        every_n_train_steps: 5000
+
+model:
+  class_path: llm_training.lms.CLM
+  init_args.config:
+    model:
+      model_class: llm_training.models.Llama
+      model_config:
+        hf_path: meta-llama/Llama-3.1-8B
+        enable_gradient_checkpointing: true
+    
+    optim:
+      optimizer_class: deepspeed.ops.adam.FusedAdam
+      optimizer_kwargs:
+        lr: 1e-5
+      lr_scheduler_class: llm_training.lr_schedulers.CosineAnnealingWarmupLR
+      lr_scheduler_kwargs:
+        num_warmup_steps: 1000
+        min_lr: 1e-6
+
+data:
+  class_path: llm_training.data.PreTrainingDataModule
+  init_args.config:
+    dataset_kwargs:
+      path: Salesforce/wikitext
+      name: wikitext-2-v1
+      num_proc: 32
+    # pre_processed_data_path: data/pre_processed/llama-3.1/wikitext-2-v1
+    tokenizer:
+      class_path: HFTokenizer
+      init_args:
+        path: meta-llama/Llama-3.1-8B
+        pad_token: <|end_of_text|>
+        padding_side: left
+    batch_size: 1
+    max_length: 4096
+    num_proc: 32
+    num_workers: 4
