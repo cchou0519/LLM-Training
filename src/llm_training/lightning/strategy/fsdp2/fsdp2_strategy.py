@@ -1,4 +1,5 @@
 import datetime
+import logging
 import shutil
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
@@ -40,12 +41,13 @@ from typing_extensions import override
 
 from .fsdp2_precision import FSDP2Precision
 
+logger = logging.getLogger(__name__)
 
 class FSDP2Strategy(ParallelStrategy):
     def __init__(
         self,
         data_parallel_size: int | Literal["auto"] = 'auto',
-        tensor_parallel_size: int | Literal["auto"] = 'auto',
+        tensor_parallel_size: int | Literal["auto"] = 1,
         save_distributed_checkpoint: bool = True,
         process_group_backend: Optional[str] = None,
         timeout: Optional[timedelta] = datetime.timedelta(minutes=30),
@@ -171,13 +173,26 @@ class FSDP2Strategy(ParallelStrategy):
         
         self._setup_distributed()
 
-        if self._data_parallel_size == "auto":
+        if self._data_parallel_size == 'auto' and self._tensor_parallel_size == 'auto':
             self._data_parallel_size = self.num_nodes
-        if self._tensor_parallel_size == "auto":
             self._tensor_parallel_size = self.num_processes
+        elif self._data_parallel_size == 'auto' and self._tensor_parallel_size != 'auto':
+            assert self.world_size % self._tensor_parallel_size == 0
+            self._data_parallel_size = self.world_size // self._tensor_parallel_size
+        elif self._data_parallel_size != 'auto' and self._tensor_parallel_size == 'auto':
+            assert self.world_size % self._data_parallel_size == 0
+            self._tensor_parallel_size = self.world_size // self._data_parallel_size
+        else:
+            assert self.world_size == self._data_parallel_size * self._tensor_parallel_size
+
+        if self.is_global_zero:
+            logger.info(f'Data Parallel Size: {self._data_parallel_size}')
+            logger.info(f'Tensor Parallel Size: {self._tensor_parallel_size}')
+        
         self._device_mesh = _setup_device_mesh(
             self._data_parallel_size, self._tensor_parallel_size, self.world_size, self.root_device
         )
+
         # Users can access device mesh in `LightningModule.configure_model()`
         assert self.lightning_module is not None
         self.lightning_module._device_mesh = self._device_mesh
