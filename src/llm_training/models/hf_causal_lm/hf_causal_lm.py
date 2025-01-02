@@ -43,6 +43,8 @@ class HFCausalLM(HFCompatModel):
         if self.config.enable_gradient_checkpointing:
             self.hf_model.gradient_checkpointing_enable({'use_reentrant': False})
 
+        self.hf_model.tie_weights()
+
     def convert_state_dict_from_hf(self, hf_state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {'hf_model.' + k: v for k, v in hf_state_dict.items()}
 
