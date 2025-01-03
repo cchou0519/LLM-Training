@@ -1,18 +1,26 @@
 import math
+from functools import partial
 
 import torch
 import torch.distributed
 import torch.utils
 import torch.utils.checkpoint
 from torch import nn
+from torch.distributed._composable.fsdp import fully_shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor.parallel import (ColwiseParallel,
+                                               PrepareModuleInput,
+                                               RowwiseParallel,
+                                               SequenceParallel,
+                                               parallelize_module)
 from transformers import Phi3Config as HFPhi3Config
 from transformers import Phi3ForCausalLM
 
 from llm_training.models.hf_compat_model import HFCompatModel
 from llm_training.models.utils.modeling_outputs import CausalLMOutput
+from llm_training.ops import liger_kernel, rms_norm
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
-from llm_training.ops.liger_kernel import *
 from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
 from llm_training.utils.decorators import copy_method_signature
 
@@ -191,7 +199,6 @@ class Phi3(HFCompatModel):
         hidden_states = self.norm(hidden_states)
 
         logits = self.lm_head(hidden_states)
-        logits = logits.float()
 
         return CausalLMOutput(
             logits=logits,
@@ -200,6 +207,70 @@ class Phi3(HFCompatModel):
     
     @copy_method_signature(forward)
     def __call__(): ...
+
+    def configure_tensor_parallel(self, tp_mesh):
+        if tp_mesh.size() == 1:
+            return
+
+        parallelize_module(
+            self,
+            tp_mesh,
+            {
+                'embed_tokens': RowwiseParallel(
+                    input_layouts=Replicate(),
+                    output_layouts=Shard(1)
+                ),
+                'norm': SequenceParallel(),
+                'lm_head': ColwiseParallel(
+                    input_layouts=Shard(1),
+                    use_local_output=False
+                )
+            }
+        )
+
+        for layer in self.layers:
+            parallelize_module(
+                layer,
+                tp_mesh,
+                {
+                    'input_layernorm': SequenceParallel(),
+                    'self_attn': PrepareModuleInput(
+                        input_kwarg_layouts={'hidden_states': Shard(1)},
+                        desired_input_kwarg_layouts={'hidden_states': Replicate()}
+                    ),
+                    'self_attn.qkv_proj': ColwiseParallel(),
+                    'self_attn.o_proj': RowwiseParallel(output_layouts=Shard(1)),
+                    'post_attention_layernorm': SequenceParallel(),
+                    'mlp': PrepareModuleInput(
+                        input_layouts=(Shard(1),),
+                        desired_input_layouts=(Replicate(),)
+                    ),
+                    'mlp.gate_up_proj': ColwiseParallel(),
+                    'mlp.down_proj': RowwiseParallel(output_layouts=Shard(1))
+                }
+            )
+
+            self_attn = layer.self_attn
+            self_attn.num_heads //= tp_mesh.size()
+            self_attn.num_key_value_heads //= tp_mesh.size()
+
+    def configure_fully_sharded_data_parallel(self, dp_mesh, reshard_after_forward, mp_policy, offload_policy, **kwargs):
+        if dp_mesh.size() == 1:
+            return
+        
+        fully_shard_ = partial(
+            fully_shard,
+            mesh=dp_mesh,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+            offload_policy=offload_policy
+        )
+        
+        fully_shard_(self.embed_tokens)
+        fully_shard_(self.norm)
+        fully_shard_(self.lm_head)
+        for layer in self.layers:
+            fully_shard_(layer)
 
 
 class Phi3RMSNorm(nn.Module):
@@ -212,7 +283,10 @@ class Phi3RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(self.hidden_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return rms_norm(x, weight=self.weight, eps=self.eps)
+        if isinstance(x, DTensor):
+            return rms_norm(x, weight=self.weight, eps=self.eps)
+        else:
+            return liger_kernel.rms_norm(x, weight=self.weight, eps=self.eps)
 
 
 class Phi3RotaryEmbedding(nn.Module):
@@ -348,12 +422,10 @@ class Phi3MLP(nn.Module):
 
         # self.activation_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return swiglu(
-            hidden_states,
-            w1w2=self.gate_up_proj.weight,
-            w3=self.down_proj.weight
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1x2 = self.gate_up_proj(x)
+        x1, x2 = torch.chunk(x1x2, chunks=2, dim=-1)
+        return self.down_proj(liger_kernel.silu_mul(x1, x2))
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -369,7 +441,6 @@ def fused_core_attention_forward(
     attention_dropout: float,
     head_dim: int,
     num_heads: int,
-    hidden_size: int,
     training: bool
 ) -> torch.Tensor:
     bsz = query_states.size(0)
@@ -403,7 +474,7 @@ def fused_core_attention_forward(
         )
     
     attn_output = attn_output.transpose(1, 2).contiguous()
-    attn_output = attn_output.reshape(bsz, q_len, hidden_size)
+    attn_output = attn_output.reshape(bsz, q_len, -1)
 
     return attn_output
 
@@ -451,7 +522,6 @@ class Phi3Attention(nn.Module):
             attention_dropout=self.attention_dropout,
             head_dim=self.head_dim,
             num_heads=self.num_heads,
-            hidden_size=self.hidden_size,
             training=self.training
         )
 
@@ -515,7 +585,7 @@ class Phi3Attention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -564,7 +634,7 @@ class Phi3FlashAttention2(Phi3Attention):
 
         cos, sin = position_embeddings
 
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -619,7 +689,7 @@ class Phi3FlashAttention2(Phi3Attention):
             sliding_window=self.config.sliding_window
         )
 
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
+        attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
         return attn_output
 
 
@@ -650,7 +720,7 @@ class Phi3SdpaAttention(Phi3Attention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -701,7 +771,7 @@ class Phi3SdpaAttention(Phi3Attention):
         )
 
         attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.view(bsz, q_len, self.hidden_size)
+        attn_output = attn_output.view(bsz, q_len, -1)
 
         return attn_output
 
