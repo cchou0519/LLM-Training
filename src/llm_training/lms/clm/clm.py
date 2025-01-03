@@ -7,13 +7,12 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.distributed.tensor.parallel import loss_parallel
-from torchmetrics.text import Perplexity
 
 from llm_training.lightning.strategy import FSDP2Strategy
 from llm_training.lms.base_lm import BaseLightningModule
 from llm_training.lms.protos import CausalLMProto
 from llm_training.lms.utils import get_model
-from llm_training.metrics import ConsumedSamples, ConsumedTokens
+from llm_training.metrics import ConsumedSamples, ConsumedTokens, Perplexity
 from llm_training.models.base_model.base_model import BaseModel
 from llm_training.ops import shift_labels
 from llm_training.ops.liger_kernel import cross_entropy
@@ -31,10 +30,13 @@ class CLM(BaseLightningModule):
         super().__init__(config)
 
         self.model = None
-        self.train_perplexity = Perplexity(ignore_index=self.config.ignore_index)
-        self.val_perplexity = Perplexity(ignore_index=self.config.ignore_index)
+
         self.consumed_samples = ConsumedSamples()
         self.consumed_tokens = ConsumedTokens(ignore_index=self.config.ignore_index)
+
+        if config.log_perplexity:
+            self.train_perplexity = Perplexity(ignore_index=self.config.ignore_index)
+            self.val_perplexity = Perplexity(ignore_index=self.config.ignore_index)
     
     @property
     def has_pre_trained_weights(self) -> bool:
@@ -120,7 +122,7 @@ class CLM(BaseLightningModule):
             backward_ctx = loss_parallel()
 
         with backward_ctx:
-            return super().backward(loss, *args, **kwargs)
+            super().backward(loss, *args, **kwargs)
 
     def training_step(self, batch: dict[str, torch.Tensor | Any], batch_idx: int) -> torch.Tensor:
         labels = shift_labels(batch['labels'], self.config.ignore_index)
@@ -138,16 +140,15 @@ class CLM(BaseLightningModule):
         if self.config.neftune_alpha is not None:
             self.log('NEFTune Alpha', self.config.neftune_alpha)
             self._current_attention_mask = None
-
-        # compute CE loss after ppl, because some CE kernels lead to wrong ppl.
-        if self.config.log_perplexity:
-            self.train_perplexity(logits, labels)
-            self.log('Perplexity/Train/Step', self.train_perplexity)
         
         loss = self.compute_loss(logits, labels)
-        
+
         self.log('loss', loss, prog_bar=True, logger=False)
         self.log('Loss/Train/Step', loss)
+
+        if self.config.log_perplexity:
+            self.train_perplexity(loss)
+            self.log('Perplexity/Train/Step', self.train_perplexity)
 
         self.consumed_samples.update(labels)
         self.consumed_tokens.update(labels)
@@ -167,13 +168,12 @@ class CLM(BaseLightningModule):
         )
         logits = outputs.logits.float()
 
-        if self.config.log_perplexity:
-            self.val_perplexity.update(logits, labels)
-            self.log('Perplexity/Val', self.val_perplexity)
-
         loss = self.compute_loss(logits, labels)
-
         self.log('Loss/Val', loss, batch_size=batch_size, sync_dist=True)
+
+        if self.config.log_perplexity:
+            self.val_perplexity.update(loss)
+            self.log('Perplexity/Val', self.val_perplexity)
 
     def get_model(self) -> BaseModel:
         return self.model
