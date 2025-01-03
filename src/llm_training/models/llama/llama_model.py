@@ -1,10 +1,17 @@
 import logging
 import math
-from typing import Optional, Tuple
+from functools import partial
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
+from torch.distributed._composable.fsdp import fully_shard
+from torch.distributed.tensor import DTensor, Replicate, Shard
+from torch.distributed.tensor.parallel import (ColwiseParallel,
+                                               PrepareModuleInput,
+                                               RowwiseParallel,
+                                               SequenceParallel,
+                                               parallelize_module)
 from transformers import LlamaConfig as HFLlamaConfig
 from transformers import LlamaForCausalLM
 
@@ -186,6 +193,79 @@ class Llama(HFCompatModel):
     @copy_method_signature(forward)
     def __call__(): ...
 
+    def configure_tensor_parallel(self, tp_mesh):
+        if tp_mesh.size() == 1:
+            return
+
+        parallelize_module(
+            self,
+            tp_mesh,
+            {
+                'embed_tokens': RowwiseParallel(
+                    input_layouts=Replicate(),
+                    output_layouts=Shard(1)
+                ),
+                'norm': SequenceParallel(),
+                'lm_head': ColwiseParallel(
+                    input_layouts=Shard(1),
+                    use_local_output=False
+                )
+            }
+        )
+
+        for layer in self.layers:
+            parallelize_module(
+                layer,
+                tp_mesh,
+                {
+                    'input_layernorm': SequenceParallel(),
+                    'self_attn': PrepareModuleInput(
+                        input_kwarg_layouts={'hidden_states': Shard(1)},
+                        desired_input_kwarg_layouts={'hidden_states': Replicate()}
+                    ),
+                    'self_attn.q_proj': ColwiseParallel(),
+                    'self_attn.k_proj': ColwiseParallel(),
+                    'self_attn.v_proj': ColwiseParallel(),
+                    'self_attn.o_proj': RowwiseParallel(output_layouts=Shard(1)),
+                    'post_attention_layernorm': SequenceParallel(),
+                    'mlp': PrepareModuleInput(
+                        input_layouts=(Shard(1),),
+                        desired_input_layouts=(Replicate(),)
+                    ),
+                    'mlp.gate_proj': ColwiseParallel(),
+                    'mlp.up_proj': ColwiseParallel(),
+                    'mlp.down_proj': RowwiseParallel(output_layouts=Shard(1))
+                }
+            )
+
+            self_attn = layer.self_attn
+            self_attn.num_heads //= tp_mesh.size()
+            self_attn.num_key_value_heads //= tp_mesh.size()
+
+    def configure_fully_sharded_data_parallel(self, dp_mesh, reshard_after_forward, mp_policy, offload_policy, **kwargs):
+        if dp_mesh.size() == 1:
+            return
+        
+        fully_shard_ = partial(
+            fully_shard,
+            mesh=dp_mesh,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+            offload_policy=offload_policy
+        )
+
+        # shard the entire model to support gradient clipping.
+        # see the following issues:
+        # https://github.com/pytorch/pytorch/issues/121020
+        # https://github.com/pytorch/pytorch/issues/134212
+        
+        fully_shard_(self.embed_tokens)
+        fully_shard_(self.norm)
+        fully_shard_(self.lm_head)
+        
+        for layer in self.layers:
+            fully_shard_(layer)
+
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, config: LlamaConfig):
@@ -197,11 +277,9 @@ class LlamaRMSNorm(nn.Module):
         self.variance_epsilon = config.rms_norm_eps
 
     def forward(self, hidden_states: torch.Tensor):
-        return rms_norm(
-            hidden_states,
-            self.weight,
-            eps=self.variance_epsilon
-        )
+        if isinstance(hidden_states, DTensor):
+            return rms_norm(hidden_states, self.weight, eps=self.variance_epsilon)
+        return liger_kernel.rms_norm(hidden_states, self.weight, eps=self.variance_epsilon)
 
     def extra_repr(self):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
@@ -345,15 +423,7 @@ class LlamaMLP(nn.Module):
         # self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x: torch.Tensor):
-        return liger_kernel.swiglu(
-            x,
-            w1=self.gate_proj.weight,
-            b1=self.gate_proj.bias,
-            w2=self.up_proj.weight,
-            b2=self.up_proj.bias,
-            w3=self.down_proj.weight,
-            b3=self.down_proj.bias
-        )
+        return self.down_proj(liger_kernel.silu_mul(self.gate_proj(x), self.up_proj(x)))
 
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -363,7 +433,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 class LlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: LlamaConfig, layer_idx: int | None = None):
         super().__init__()
 
         self.config = config
@@ -465,8 +535,8 @@ class LlamaAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor] = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
 
@@ -555,13 +625,15 @@ class LlamaFlashAttention2(LlamaAttention):
 
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
 
+        torch.cuda.synchronize()
+
         return attn_output
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.LongTensor] = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
 
@@ -640,8 +712,8 @@ class LlamaSdpaAttention(LlamaAttention):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-        attention_mask: Optional[torch.Tensor] = None
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         bsz, q_len, _ = hidden_states.size()
 
@@ -692,8 +764,8 @@ class LlamaDecoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]],
-        attention_mask: Optional[torch.Tensor] = None
+        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         residual = hidden_states
 

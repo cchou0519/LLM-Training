@@ -31,3 +31,9 @@ def swiglu(
         return F.linear(LigerSiLUMulFunction.apply(x1, x2), w3)
     
     return F.linear(F.silu(x1) * x2, w3, b3)
+
+
+def silu_mul(x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+    if x1.device.type == 'cuda':
+        return LigerSiLUMulFunction.apply(x1, x2)
+    return F.silu(x1) * x2

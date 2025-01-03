@@ -32,15 +32,10 @@ model:
   class_path: llm_training.lms.CLM
   init_args.config:
     model:
-      model_class: llm_training.models.HFLlamaCausalLM
+      model_class: llm_training.models.Llama
       model_config:
         hf_path: meta-llama/Llama-3.1-8B
-        enable_liger_kernel: true
         enable_gradient_checkpointing: true
-        hf_extra_kwargs:
-          use_cache: false
-        
-    log_perplexity: false
     
     optim:
       optimizer_class: torch.optim.AdamW

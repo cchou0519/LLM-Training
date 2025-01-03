@@ -283,6 +283,37 @@ class AttentionMaskConverter:
         return ignore_causal_mask
 
 
+def get_sequence_indices(attention_mask: torch.Tensor) -> tuple[int, int, int]:
+    sequence_indices = []
+    for i, a in enumerate(attention_mask):
+        current_sid = a[0]
+        s = 0
+        e = -1
+        for sid in a:
+            if sid == current_sid:
+                e += 1
+            else:
+                sequence_indices.append((i, s, e))
+                e += 1
+                s = e
+                current_sid = sid
+        else:
+            sequence_indices.append((i, s, e))
+    return sequence_indices
+
+
+def prepare_packed_4d_causal_mask(
+    attention_mask: torch.Tensor,
+    causal_mask: torch.Tensor,
+    inplace: bool = False
+) -> torch.Tensor:
+    causal_mask = causal_mask if inplace else causal_mask.clone()
+    min_dtype = torch.finfo(causal_mask.dtype).min
+    for i, s, e in get_sequence_indices(attention_mask):
+        causal_mask[i, :, s:e + 1, :s] = min_dtype
+    return causal_mask
+
+
 def prepare_4d_causal_attention_mask(
     attention_mask: Optional[torch.Tensor],
     input_shape: Union[torch.Size, Tuple, List],
@@ -312,7 +343,7 @@ def prepare_4d_causal_attention_mask(
 
     # 4d mask is passed through the layers
     if attention_mask is not None and len(attention_mask.shape) == 2:
-        attention_mask = attn_mask_converter.to_4d(
+        causal_mask = attn_mask_converter.to_4d(
             attention_mask, input_shape[-1], key_value_length=key_value_length, dtype=inputs_embeds.dtype
         )
     elif attention_mask is not None and len(attention_mask.shape) == 4:
@@ -324,15 +355,17 @@ def prepare_4d_causal_attention_mask(
         else:
             # if the 4D mask has correct shape - invert it and fill with negative infinity
             inverted_mask = 1.0 - attention_mask
-            attention_mask = inverted_mask.masked_fill(
+            causal_mask = inverted_mask.masked_fill(
                 inverted_mask.to(torch.bool), torch.finfo(inputs_embeds.dtype).min
             )
     else:
-        attention_mask = attn_mask_converter.to_causal_4d(
+        causal_mask = attn_mask_converter.to_causal_4d(
             input_shape[0], input_shape[-1], key_value_length, dtype=inputs_embeds.dtype, device=inputs_embeds.device
         )
 
-    return attention_mask
+    causal_mask = prepare_packed_4d_causal_mask(attention_mask, causal_mask)
+
+    return causal_mask
 
 
 def get_max_seqlen_in_batch(attention_mask: torch.Tensor):
@@ -615,34 +648,3 @@ def flash_attention_forward(
         )
 
     return attn_output
-
-
-def get_sequence_indices(attention_mask: torch.Tensor) -> tuple[int, int, int]:
-    sequence_indices = []
-    for i, a in enumerate(attention_mask):
-        current_sid = a[0]
-        s = 0
-        e = -1
-        for sid in a:
-            if sid == current_sid:
-                e += 1
-            else:
-                sequence_indices.append((i, s, e))
-                e += 1
-                s = e
-                current_sid = sid
-        else:
-            sequence_indices.append((i, s, e))
-    return sequence_indices
-
-
-def prepare_packed_4d_causal_mask(
-    attention_mask: torch.Tensor,
-    causal_mask: torch.Tensor,
-    inplace: bool = False
-) -> torch.Tensor:
-    causal_mask = causal_mask if inplace else causal_mask.clone()
-    min_dtype = torch.finfo(causal_mask.dtype).min
-    for i, s, e in get_sequence_indices(attention_mask):
-        causal_mask[i, :, s:e + 1, :s] = min_dtype
-    return causal_mask
