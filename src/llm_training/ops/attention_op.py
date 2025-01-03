@@ -302,14 +302,14 @@ def get_sequence_indices(attention_mask: torch.Tensor) -> tuple[int, int, int]:
     return sequence_indices
 
 
-def prepare_packed_4d_causal_mask(
-    attention_mask: torch.Tensor,
+def update_4d_causal_mask_for_packed_sequence(
     causal_mask: torch.Tensor,
+    sequence_indices: tuple[int, int, int],
     inplace: bool = False
 ) -> torch.Tensor:
     causal_mask = causal_mask if inplace else causal_mask.clone()
     min_dtype = torch.finfo(causal_mask.dtype).min
-    for i, s, e in get_sequence_indices(attention_mask):
+    for i, s, e in sequence_indices:
         causal_mask[i, :, s:e + 1, :s] = min_dtype
     return causal_mask
 
@@ -337,6 +337,10 @@ def prepare_4d_causal_attention_mask(
         sliding_window (`int`, *optional*):
             If the model uses windowed attention, a sliding window should be passed.
     """
+
+    sequence_indices = get_sequence_indices(attention_mask)
+    attention_mask = attention_mask.masked_fill(attention_mask > 1, 1)
+
     attn_mask_converter = AttentionMaskConverter(is_causal=True, sliding_window=sliding_window)
 
     key_value_length = input_shape[-1] + past_key_values_length
@@ -363,8 +367,8 @@ def prepare_4d_causal_attention_mask(
             input_shape[0], input_shape[-1], key_value_length, dtype=inputs_embeds.dtype, device=inputs_embeds.device
         )
 
-    causal_mask = prepare_packed_4d_causal_mask(attention_mask, causal_mask)
-
+    causal_mask = update_4d_causal_mask_for_packed_sequence(causal_mask, sequence_indices)
+    
     return causal_mask
 
 
