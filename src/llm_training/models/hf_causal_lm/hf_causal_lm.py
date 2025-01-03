@@ -1,6 +1,10 @@
+from functools import partial
+
 import torch
 import torch.distributed
+from liger_kernel.transformers import _apply_liger_kernel_to_instance
 from torch import nn
+from torch.distributed._composable.fsdp import fully_shard
 from transformers import (AutoConfig, AutoModelForCausalLM,
                           modeling_flash_attention_utils)
 from transformers.modeling_utils import no_init_weights
@@ -19,18 +23,8 @@ class HFCausalLM(HFCompatModel):
     config: HFCausalLMConfig
 
     config_class = HFCausalLMConfig
+    hf_model_class = AutoModelForCausalLM
     hf_config_class = AutoConfig
-
-    @property
-    def hf_model_class(self) -> type[AutoModelForCausalLM]:
-        if self.config.enable_liger_kernel:
-            from liger_kernel.transformers import AutoLigerKernelForCausalLM
-            return AutoLigerKernelForCausalLM
-        return AutoModelForCausalLM
-
-    @property
-    def no_split_modules(self) -> list[str] | None:
-        return self.hf_model._no_split_modules
 
     def __init__(self, config: HFCausalLMConfig) -> None:
         super().__init__(config)
@@ -44,6 +38,9 @@ class HFCausalLM(HFCompatModel):
             self.hf_model.gradient_checkpointing_enable({'use_reentrant': False})
 
         self.hf_model.tie_weights()
+        
+        if self.config.enable_liger_kernel:
+            _apply_liger_kernel_to_instance(self.hf_model, rope=False)
 
     def convert_state_dict_from_hf(self, hf_state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {'hf_model.' + k: v for k, v in hf_state_dict.items()}
@@ -84,3 +81,31 @@ class HFCausalLM(HFCompatModel):
     
     def get_output_embeddings(self) -> nn.Linear:
         return self.hf_model.get_output_embeddings()
+
+    def configure_fully_sharded_data_parallel(self, dp_mesh, reshard_after_forward, mp_policy, offload_policy, **kwargs):
+        if dp_mesh.size() == 1:
+            return
+        
+        fully_shard_ = partial(
+            fully_shard,
+            mesh=dp_mesh,
+            reshard_after_forward=reshard_after_forward,
+            mp_policy=mp_policy,
+            offload_policy=offload_policy
+        )
+        
+        fully_sharded_module_names = []
+        no_split_modules = self.hf_model._no_split_modules or []
+        for n, m in self.named_modules():
+            if m.__class__.__name__ in no_split_modules:
+                fully_shard_(m)
+                fully_sharded_module_names.append(n)
+
+        # shard the rest modules for gradient clipping as a workaround
+        for n, m in self.named_modules():
+            for o in fully_sharded_module_names:
+                if o.startswith(n) or n.startswith(o):
+                    break
+            else:
+                if any(True for _ in m.parameters()):
+                    fully_shard_(m)

@@ -18,7 +18,8 @@ from transformers import Phi3ForCausalLM
 
 from llm_training.models.hf_compat_model import HFCompatModel
 from llm_training.models.utils.modeling_outputs import CausalLMOutput
-from llm_training.ops import liger_kernel, rms_norm
+from llm_training.ops import *
+from llm_training.ops import liger_kernel
 from llm_training.ops.attention_op import (flash_attention_forward,
                                            prepare_4d_causal_attention_mask)
 from llm_training.ops.rope_utils import ROPE_INIT_FUNCTIONS, RoPEConfig
@@ -585,7 +586,7 @@ class Phi3Attention(nn.Module):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -634,7 +635,7 @@ class Phi3FlashAttention2(Phi3Attention):
 
         cos, sin = position_embeddings
 
-        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -720,7 +721,7 @@ class Phi3SdpaAttention(Phi3Attention):
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
         cos, sin = position_embeddings
-        query_states, key_states = liger_kernel.apply_rope(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rope(query_states, key_states, cos, sin)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
