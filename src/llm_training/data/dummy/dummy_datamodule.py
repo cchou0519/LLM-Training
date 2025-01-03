@@ -11,7 +11,8 @@ class DummyDataModule(BaseDataModule):
         super().__init__(config)
 
     def setup(self, stage: str | None = None) -> None:
-        self.config.base_seed = self.trainer.strategy.broadcast(self.config.base_seed)
+        if self.trainer is not None:
+            self.config.base_seed = self.trainer.strategy.broadcast(self.config.base_seed)
         
         super().setup(stage)
 
