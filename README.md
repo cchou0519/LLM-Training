@@ -18,7 +18,7 @@ A distributed training framework for large language models powered by Lightning.
 
 ### Instruction Tuning
 
-- Supports data packing.
+- Supports data packing without cross-contamination.
 - Supports NEFTune.
 
 ## Supported Models
