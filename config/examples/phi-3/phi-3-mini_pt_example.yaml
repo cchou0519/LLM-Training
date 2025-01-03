@@ -38,8 +38,6 @@ model:
       model_class: llm_training.models.Phi3
       model_config:
         hf_path: microsoft/Phi-3-mini-128k-instruct
-        torch_dtype: bfloat16
-        attn_implementation: flash_attention_2
         enable_gradient_checkpointing: true
     
     optim:

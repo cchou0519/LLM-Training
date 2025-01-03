@@ -31,12 +31,12 @@ Besides, alternative implementations that support additional features for specif
 | Architecture | Selective Activation Checkpointing | Liger Kernel       | Tensor Parallelism | Sequence Parallelism |
 | ------------ | ---------------------------------- | ------------------ | ------------------ | -------------------- |
 | LLaMA        | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
-| Phi-3        | :white_check_mark:                 | :white_check_mark: | :x:                | :x:                  |
+| Phi-3        | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
 
 ## Known Problems
 - :white_check_mark: [Cross-contamination Attention](https://github.com/MeetKai/functionary/tree/main/functionary/train/packing)
-  - Fixed for FA2
-  - Fixed for SDPA (LLaMA only)
+  - Fixed for LLaMA & Phi-3
+  - Fixed only FA2 in the models implemented by HuggingFace.
 - :x: [Faulty Gradient Accumulation](https://unsloth.ai/blog/gradient)
   - Not fixed yet
   - There should be similar problems in distributed training
