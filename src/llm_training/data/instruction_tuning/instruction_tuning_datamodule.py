@@ -148,24 +148,30 @@ class InstructionTuningDataModule(HFBasedDataModule):
     def _pre_process_data(
         cls,
         batch: dict[str, list],
-        config: InstructionTuningDataModuleConfig
+        tokenizer: PreTrainedTokenizerBase,
+        chat_template: str | None,
+        default_system_prompt: str | None,
+        add_default_system_prompt_rate: float | None,
+        max_length: int | None,
+        overlong_handling_method: OverlongHandlingMethod,
+        packing_method: PackingMethod
     ) -> dict[str, list]:
         batch = cls._apply_chat_template_and_tokenize(
             batch,
-            tokenizer=config.tokenizer,
-            chat_template=config.chat_template,
-            default_system_prompt=config.default_system_prompt,
-            add_default_system_prompt_rate=config.add_default_system_prompt_rate
+            tokenizer=tokenizer,
+            chat_template=chat_template,
+            default_system_prompt=default_system_prompt,
+            add_default_system_prompt_rate=add_default_system_prompt_rate
         )
 
-        if config.max_length is not None:
-            if config.overlong_handling_method == OverlongHandlingMethod.DROP:
-                batch = cls._drop_overlong_examples(batch, config.max_length)
-            elif config.overlong_handling_method == OverlongHandlingMethod.TRUNCATE:
-                batch = cls._truncate_overlong_examples(batch, config.max_length)
+        if max_length is not None:
+            if overlong_handling_method == OverlongHandlingMethod.DROP:
+                batch = cls._drop_overlong_examples(batch, max_length)
+            elif overlong_handling_method == OverlongHandlingMethod.TRUNCATE:
+                batch = cls._truncate_overlong_examples(batch, max_length)
 
-            if config.packing_method == PackingMethod.GROUP_BY_LENGTH:
-                batch = cls._group_by_length(batch, config.max_length)
+            if packing_method == PackingMethod.GROUP_BY_LENGTH:
+                batch = cls._group_by_length(batch, max_length)
 
         return batch
  
@@ -173,7 +179,15 @@ class InstructionTuningDataModule(HFBasedDataModule):
         dataset_dict = self.map_dataset_dict(
             dataset_dict,
             self._pre_process_data,
-            fn_kwargs=dict(config=self.config),
+            fn_kwargs=dict(
+                tokenizer=self.config.tokenizer,
+                chat_template=self.config.chat_template,
+                default_system_prompt=self.config.default_system_prompt,
+                add_default_system_prompt_rate=self.config.add_default_system_prompt_rate,
+                max_length=self.config.max_length,
+                overlong_handling_method=self.config.overlong_handling_method,
+                packing_method=self.config.packing_method
+            ),
             batched=True,
             remove_columns=True,
             num_proc=self.config.num_proc,

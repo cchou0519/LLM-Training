@@ -107,17 +107,20 @@ class PreferenceTuningDataModule(HFBasedDataModule):
     def _pre_process_data(
         cls,
         batch: dict[str, Any],
-        config: PreferenceTuningDataModuleConfig
+        tokenizer: PreTrainedTokenizerBase,
+        chat_template: str | None,
+        max_length: int | None,
+        overlong_handling_method: OverlongHandlingMethod
     ):
         batch = cls._apply_chat_template_and_tokenize(
             batch,
-            tokenizer=config.tokenizer,
-            chat_template=config.chat_template
+            tokenizer=tokenizer,
+            chat_template=chat_template
         )
 
-        if config.max_length is not None:
-            if config.overlong_handling_method == OverlongHandlingMethod.DROP:
-                batch = cls._drop_overlong_examples(batch, config.max_length)
+        if max_length is not None:
+            if overlong_handling_method == OverlongHandlingMethod.DROP:
+                batch = cls._drop_overlong_examples(batch, max_length)
         
         return batch
  
@@ -125,7 +128,12 @@ class PreferenceTuningDataModule(HFBasedDataModule):
         dataset_dict = self.map_dataset_dict(
             dataset_dict,
             self._pre_process_data,
-            fn_kwargs=dict(config=self.config),
+            fn_kwargs=dict(
+                tokenizer=self.config.tokenizer,
+                chat_template=self.config.chat_template,
+                max_length=self.config.max_length,
+                overlong_handling_method=self.config.overlong_handling_method
+            ),
             batched=True,
             remove_columns=True,
             num_proc=self.config.num_proc,
