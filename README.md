@@ -28,10 +28,10 @@ However, only text models are supported currently.
 
 Besides, alternative implementations that support additional features for specific model architectures are available.
 
-| Architecture           | Selective Activation Checkpointing | Liger Kernel       | Tensor Parallelism | Sequence Parallelism |
-| ---------------------- | ---------------------------------- | ------------------ | ------------------ | -------------------- |
+| Architecture   | Selective Activation Checkpointing | Liger Kernel       | Tensor Parallelism | Sequence Parallelism |
+| -------------- | ---------------------------------- | ------------------ | ------------------ | -------------------- |
 | LLaMA(2/3/3.x) | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
-| Phi-3(3.5/4)               | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
+| Phi-3(3.5/4)   | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
 
 ## Known Problems
 - :white_check_mark: [Cross-contamination Attention](https://github.com/MeetKai/functionary/tree/main/functionary/train/packing)
