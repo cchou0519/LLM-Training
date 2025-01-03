@@ -418,3 +418,17 @@ class FSDP2Strategy(ParallelStrategy):
         # `LightningEnvironment.set_global_rank` will do this too, but we cannot rely on that implementation detail
         # additionally, for some implementations, the setter is a no-op, so it's safer to access the getter
         rank_zero_only.rank = utils_rank_zero_only.rank = self.global_rank
+
+    @contextmanager
+    def block_backward_sync(self) -> Generator:
+        from torch.distributed._composable.fsdp import FSDPModule
+        
+        for m in self.lightning_module.modules():
+            if isinstance(m, FSDPModule):
+                m.set_requires_gradient_sync(False, recurse=False)
+        
+        yield
+
+        for m in self.lightning_module.modules():
+            if isinstance(m, FSDPModule):
+                m.set_requires_gradient_sync(True, recurse=False)
