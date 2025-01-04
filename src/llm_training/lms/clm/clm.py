@@ -30,13 +30,6 @@ class CLM(BaseLightningModule):
         super().__init__(config)
 
         self.model = None
-
-        self.consumed_samples = ConsumedSamples()
-        self.consumed_tokens = ConsumedTokens(ignore_index=self.config.ignore_index)
-
-        if config.log_perplexity:
-            self.train_perplexity = Perplexity(ignore_index=self.config.ignore_index)
-            self.val_perplexity = Perplexity(ignore_index=self.config.ignore_index)
     
     @property
     def has_pre_trained_weights(self) -> bool:
@@ -89,6 +82,22 @@ class CLM(BaseLightningModule):
         self._neftune_hook_handle = embedding.register_forward_hook(self.neftune_forward_hook)
 
     def configure_model(self) -> None:
+        process_group = self.strategy.dp_mesh.get_group() if isinstance(self.strategy, FSDP2Strategy) else None
+        self.consumed_samples = ConsumedSamples(process_group=process_group)
+        self.consumed_tokens = ConsumedTokens(
+            ignore_index=self.config.ignore_index,
+            process_group=process_group
+        )
+        if self.config.log_perplexity:
+            self.train_perplexity = Perplexity(
+                ignore_index=self.config.ignore_index,
+                process_group=process_group
+            )
+            self.val_perplexity = Perplexity(
+                ignore_index=self.config.ignore_index,
+                process_group=process_group
+            )
+
         self.model = get_model(self.config.model)
 
         if self.global_rank == 0:

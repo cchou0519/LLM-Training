@@ -8,8 +8,8 @@ class ConsumedTokens(Metric):
     
     n: torch.Tensor
 
-    def __init__(self, ignore_index: int = -100) -> None:
-        super().__init__()
+    def __init__(self, ignore_index: int = -100, **kwargs) -> None:
+        super().__init__(**kwargs)
 
         self.ignore_index = ignore_index
         self.add_state('n', torch.tensor(0), dist_reduce_fx='sum', persistent=True)

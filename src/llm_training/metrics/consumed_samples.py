@@ -8,8 +8,8 @@ class ConsumedSamples(Metric):
     
     n: torch.Tensor
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
         self.add_state('n', torch.tensor(0), dist_reduce_fx='sum', persistent=True)
     
