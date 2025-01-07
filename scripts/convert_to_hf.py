@@ -71,7 +71,7 @@ def main(
     hf_model = model.get_hf_model()
     
     if eos_token_id is not None:
-        hf_model.config.eos_token_id = eos_token_id
+        hf_model.config.eos_token_id = eos_token_id if isinstance(eos_token_id, int) else eos_token_id[0]
         hf_model.generation_config.eos_token_id = eos_token_id
     
     print('Saving model')

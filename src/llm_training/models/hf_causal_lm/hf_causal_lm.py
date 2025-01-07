@@ -56,6 +56,9 @@ class HFCausalLM(HFCompatModel):
         inputs_embeds: torch.Tensor | None = None,
         return_last_hidden_states: bool = False
     ) -> CausalLMOutput:
+        if self.hf_config._attn_implementation != 'flash_attention_2':
+            attention_mask = attention_mask.clamp_max(1)
+        
         outputs = self.hf_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
