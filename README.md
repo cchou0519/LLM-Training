@@ -1,4 +1,4 @@
-# LLM Training
+# LLM-Training
 
 A distributed training framework for large language models powered by Lightning.
 
@@ -32,14 +32,6 @@ Besides, alternative implementations that support additional features for specif
 | -------------- | ---------------------------------- | ------------------ | ------------------ | -------------------- |
 | LLaMA(2/3/3.x) | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
 | Phi-3(3.5/4)   | :white_check_mark:                 | :white_check_mark: | :white_check_mark: | :white_check_mark:   |
-
-## Known Problems
-- :white_check_mark: [Cross-contamination Attention](https://github.com/MeetKai/functionary/tree/main/functionary/train/packing)
-  - Fixed for LLaMA & Phi-3
-  - Fixed only FA2 in the models implemented by HuggingFace.
-- :x: [Faulty Gradient Accumulation](https://unsloth.ai/blog/gradient)
-  - Not fixed yet
-  - There should be similar problems in distributed training
 
 ## Installation
 
@@ -109,6 +101,42 @@ python scripts/convert_to_hf.py <CKPT_PATH> <OUTPUT_PATH>
 
 Note that `<CKPT_PATH>` could either be a file or a folder, depending on the parallelization strategy you are using.
 By default, its name will follow this format: `epoch=xxx-step=yyy.ckpt`.
+
+## Hints
+
+### Cross-contamination Attention
+
+To improve training efficiency, we typically perform data packing, where multiple sequences of different lengths are merged into a single sequence, ensuring that each packed sequence has similar lengths.
+However, without proper handling, the attention mechanism may focus on irrelevant information, increasing the risk of hallucination in the model.
+
+The model architecture implemented in LLM-Training has already addressed this issue.
+On the other hand, if you are using the model architecture provided by HuggingFace, this issue is only handled when Flash Attention 2 is enabled.
+
+Reference: https://github.com/MeetKai/functionary/tree/main/functionary/train/packing
+
+### Faulty Gradient Accumulation
+
+Gradient accumulation is a commonly used technique to simulate large-batch training under limited GPU memory. However, the Unsloth AI team discovered an issue in previous implementations, where the accumulated gradients are inconsistent with those from full-batch training.
+The root cause of this problem lies in improper loss normalization, which can also occur in distributed training scenarios.
+
+Currently, LLM-Training has not addressed this issue in its `main` branch, but the `fix-ga-dp` branch includes a fix for `CLM`.
+However, our experiments show that the corrected loss calculation does not significantly improve model performance and may even lead to a slight decrease.
+
+If you observe different experimental results, we encourage you to share them.
+
+Reference: https://unsloth.ai/blog/gradient
+
+### Difference between DeepSpeed and FSDP
+
+DeepSpeed and FSDP are both implementations of distributed training, with their algorithms based on ZeRO.
+As a result, they are generally considered to deliver similar performance.
+However, there are some differences in their details, particularly in parameter precision settings, which are discussed in this [blog](https://huggingface.co/blog/deepspeed-to-fsdp-and-back) post.
+
+In FSDP2's mixed-precision training, we observed that it does not appear to store full-precision parameters separately.
+This causes both gradients and optimizer states to remain in half precision, which can significantly degrade training performance.
+
+To address this issue, we implemented an optimizer wrapper that automatically maintains a copy of full-precision parameters.
+The optimizer operates on these full-precision parameters and then synchronizes the updates back to the half precision parameters, ensuring training performance.
 
 ## Issues
 
