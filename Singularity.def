@@ -1,0 +1,10 @@
+Bootstrap: docker
+From: cchou0519/llm-training
+
+%environment
+    . /opt/conda/etc/profile.d/conda.sh
+    conda activate llm-training
+    export PATH="/opt/conda/envs/llm-training/bin:$PATH"
+
+%runscript
+    exec /bin/bash "$@"
